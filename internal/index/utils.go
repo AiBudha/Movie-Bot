@@ -60,8 +60,8 @@ func TDLibChannelIDToPlain(id int64) int64 {
 	return -r
 }
 
-// regex expression to parse floodwait errors and extract seconds (pretty primitive ngl)
-var floodRegex = regexp.MustCompile(`wait of (\d+) seconds`)
+// regex expression to parse floodwait errors and extract seconds (supports wait [of] X seconds)
+var floodRegex = regexp.MustCompile(`(?i)wait(?:\s+of)?\s+(\d+)`)
 
 const (
 	FloodwaitErrorRPCString = "FLOOD_WAIT_X"

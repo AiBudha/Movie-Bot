@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"autofilterbot/internal/database"
@@ -139,6 +140,72 @@ func CmdIndex(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	// Check if an operation already exists for this channel to prevent duplicate active operations
+	existingOps, err := _app.DB.GetIndexOperationByChannel(channelId)
+	if err == nil && existingOps != nil {
+		plainChannelID := index.TDLibChannelIDToPlain(channelId)
+		text := fmt.Sprintf(`
+<b><u>Index Operation Overview</u></b>
+
+An indexing operation is already active or configured for this channel.
+
+<b>Process ID</b>: <code>%s</code>
+<b>Channel</b>: <code>%d</code>
+<b>Start</b>: <a href='https://t.me/c/%d/%d'>%d</a>
+<b>End</b>: `, existingOps.ID, existingOps.ChannelID, plainChannelID, existingOps.StartMessageID, existingOps.StartMessageID)
+
+		if existingOps.EndMessageID != 0 {
+			text += fmt.Sprintf("<a href='https://t.me/c/%d/%d'>%d</a>\n<b>Total Messages</b>: %d", plainChannelID, existingOps.EndMessageID, existingOps.EndMessageID, existingOps.EndMessageID-existingOps.StartMessageID)
+		} else {
+			text += "<i>Until Latest</i>"
+		}
+
+		text += fmt.Sprintf("\n<b>Current Progress</b>: <a href='https://t.me/c/%d/%d'>%d</a>", plainChannelID, existingOps.CurrentMessageID, existingOps.CurrentMessageID)
+
+		keyboard := [][]gotgbot.InlineKeyboardButton{{existingOps.CancelButton(), existingOps.ModifyButton()}}
+		if existingOps.IsPaused {
+			keyboard[0] = append(keyboard[0], existingOps.StartButton())
+		} else {
+			keyboard[0] = append(keyboard[0], existingOps.PauseButton())
+		}
+
+		_, err = bot.SendMessage(chatId, text, &gotgbot.SendMessageOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+		return err
+	}
+
+	// Check if the channel was previously indexed to offer resume options
+	lastIndexedID, err := _app.DB.GetIndexedChannel(channelId)
+	if err == nil && lastIndexedID > 0 {
+		text := fmt.Sprintf(`
+<b>🔄 Channel Index Choice</b>
+
+This channel was previously indexed. The last indexed message ID is <code>%d</code>.
+
+Do you want to start indexing from the beginning or resume from the last indexed message?`, lastIndexedID)
+
+		keyboard := [][]gotgbot.InlineKeyboardButton{
+			{
+				{
+					Text:         "From Start 🔄",
+					CallbackData: fmt.Sprintf("index_choice|%d_%d_%d_start", channelId, startId, endId),
+				},
+				{
+					Text:         "From Last Indexed ⏩",
+					CallbackData: fmt.Sprintf("index_choice|%d_%d_%d_resume", channelId, startId, endId),
+				},
+			},
+		}
+
+		_, err = bot.SendMessage(chatId, text, &gotgbot.SendMessageOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+		return err
+	}
+
 	progressMessage, err := bot.SendMessage(chatId, "<code>Setting Up Index Operation ...</code>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 	if err != nil {
 		_app.Log.Warn(fmt.Sprintf("cmdindex: failed to send progress message: %v", err), zap.Int64("chat_id", chatId))
@@ -153,7 +220,7 @@ func CmdIndex(bot *gotgbot.Bot, ctx *ext.Context) error {
 		ChannelID:             channelId,
 		ProgressMessageChatID: progressMessage.Chat.Id,
 		ProgressMessageID:     progressMessage.MessageId,
-		IsPaused: true, // incase app restarts before user finishes setup
+		IsPaused:              true, // incase app restarts before user finishes setup
 	}
 
 	err = _app.DB.NewIndexOperation(&indexModel)
@@ -399,5 +466,97 @@ func CbIndex(bot *gotgbot.Bot, ctx *ext.Context) error {
 		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Starting Index Operation..."})
 	}
 
+	return nil
+}
+
+// CbIndexChoice handles the user choice (From Start or From Last Indexed).
+func CbIndexChoice(bot *gotgbot.Bot, ctx *ext.Context) error {
+	if !_app.AuthAdmin(ctx) {
+		return nil
+	}
+
+	c := ctx.CallbackQuery
+	d := callbackdata.FromString(c.Data)
+	if d.LenArgs() < 4 {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Not enough arguments in callback", ShowAlert: true})
+		return nil
+	}
+
+	chatId := c.Message.GetChat().Id
+	channelId, _ := strconv.ParseInt(d.Args[0], 10, 64)
+	startId, _ := strconv.ParseInt(d.Args[1], 10, 64)
+	endId, _ := strconv.ParseInt(d.Args[2], 10, 64)
+	choice := d.Args[3]
+
+	if choice == "resume" {
+		lastID, err := _app.DB.GetIndexedChannel(channelId)
+		if err == nil && lastID > 0 {
+			startId = lastID + 1
+		}
+	}
+
+	if endId != 0 && startId >= endId {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "⚠️ Channel is already fully indexed up to the requested end ID!",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	// Double check if an operation already exists for this channel to prevent duplicate active operations
+	existingOps, err := _app.DB.GetIndexOperationByChannel(channelId)
+	if err == nil && existingOps != nil {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "An active/paused operation already exists for this channel!", ShowAlert: true})
+		return nil
+	}
+
+	progressMessage, _, err := c.Message.EditText(bot, "<code>Setting Up Index Operation ...</code>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+	if err != nil {
+		_app.Log.Warn(fmt.Sprintf("cbindexchoice: failed to edit progress message: %v", err))
+		return nil
+	}
+
+	indexModel := model.Index{
+		ID:                    functions.RandString(6),
+		StartMessageID:        startId,
+		EndMessageID:          endId,
+		CurrentMessageID:      startId,
+		ChannelID:             channelId,
+		ProgressMessageChatID: progressMessage.Chat.Id,
+		ProgressMessageID:     progressMessage.MessageId,
+		IsPaused:              true,
+	}
+
+	err = _app.DB.NewIndexOperation(&indexModel)
+	if err != nil {
+		_app.Log.Error(fmt.Sprintf("cbindexchoice: failed to insert index to db: %v", err))
+		_, _ = bot.SendMessage(chatId, "Failed to create db entry: "+err.Error(), nil)
+		return nil
+	}
+
+	_ = _app.AddFileChannel(channelId)
+
+	plainChannelID := index.TDLibChannelIDToPlain(channelId)
+	text := fmt.Sprintf(`
+<b><u>Index Operation Overview</u></b>
+
+<b>Channel</b>: <code>%d</code>
+<b>Start</b>: <a href='https://t.me/c/%d/%d'>%d</a>
+<b>End</b>: `, indexModel.ChannelID, plainChannelID, indexModel.StartMessageID, indexModel.StartMessageID)
+
+	if indexModel.EndMessageID != 0 {
+		text += fmt.Sprintf("<a href='https://t.me/c/%d/%d'>%d</a>\n<b>Total Messages</b>: %d", plainChannelID, indexModel.EndMessageID, indexModel.EndMessageID, indexModel.EndMessageID-indexModel.StartMessageID)
+	} else {
+		text += "<i>Until Latest</i>"
+	}
+
+	keyboard := [][]gotgbot.InlineKeyboardButton{{indexModel.CancelButton(), indexModel.ModifyButton(), indexModel.StartButton()}}
+
+	_, _, err = progressMessage.EditText(bot, text, &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML, ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard}})
+	if err != nil {
+		_app.Log.Warn(fmt.Sprintf("cbindexchoice: failed to update progress message to start: %v", err))
+	}
+
+	c.Answer(bot, nil)
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 
 	"autofilterbot/internal/model"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 //NOTE: error checking is much looser in index db funcs
@@ -72,4 +73,42 @@ func (c *Client) GetActiveIndexOperations() ([]*model.Index, error) {
 func (c *Client) DeleteOperation(pid string) error {
 	_, err := c.opsCollection.DeleteOne(c.ctx, idFilter(pid))
 	return err
+}
+
+// SaveIndexedChannel saves the last message index for a channel.
+func (c *Client) SaveIndexedChannel(channelID int64, lastMessageID int64) error {
+	opts := options.Update().SetUpsert(true)
+	_, err := c.indexedChannelsCollection.UpdateOne(
+		c.ctx,
+		bson.M{"_id": channelID},
+		bson.M{"$set": bson.M{"last_message_id": lastMessageID}},
+		opts,
+	)
+	return err
+}
+
+// GetIndexedChannel retrieves the last message index for a channel.
+func (c *Client) GetIndexedChannel(channelID int64) (int64, error) {
+	res := c.indexedChannelsCollection.FindOne(c.ctx, bson.M{"_id": channelID})
+	if err := res.Err(); err != nil {
+		return 0, err
+	}
+
+	var doc struct {
+		LastMessageID int64 `bson:"last_message_id"`
+	}
+	err := res.Decode(&doc)
+	return doc.LastMessageID, err
+}
+
+// GetIndexOperationByChannel retrieves any active/paused index operation for a channel.
+func (c *Client) GetIndexOperationByChannel(channelID int64) (*model.Index, error) {
+	res := c.opsCollection.FindOne(c.ctx, bson.M{"channel": channelID})
+	if err := res.Err(); err != nil {
+		return nil, err
+	}
+
+	var i model.Index
+	err := res.Decode(&i)
+	return &i, err
 }

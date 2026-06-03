@@ -291,7 +291,10 @@ func (o *Operation) run(ctx context.Context) {
 							break
 						}
 						s, ok, _ := ParseMtProtoFloodwait(err)
-						if ok && s != 0 {
+						if ok {
+							if s == 0 {
+								s = 30 // Safe fallback if parsing fails but error is FLOOD_WAIT
+							}
 							o.log.Warn("index: floodwait detected, retrying chunk", zap.Int64("seconds", s), zap.Int("worker", workerID))
 							
 							// Dynamic backoff: Increase pacing delay on floodwait
@@ -373,10 +376,12 @@ func (o *Operation) run(ctx context.Context) {
 				{o.ResumeButton(), o.ModifyButton(), o.CancelButton()},
 			},
 		}
+		_ = o.db.SaveIndexedChannel(o.ChannelID, o.CurrentMessageID)
 	default:
 		// Completed
 		text = o.buildProgressMessage().String() + "\n<b>✅ Index Operation Completed</b>"
 		o.db.DeleteOperation(o.ID)
+		_ = o.db.SaveIndexedChannel(o.ChannelID, o.EndMessageID)
 	}
 
 	_, _, err = progressM.EditText(o.bot, text, &gotgbot.EditMessageTextOpts{
@@ -400,6 +405,7 @@ func (o *Operation) pushToDB() {
 	if err != nil {
 		o.log.Error(fmt.Sprintf("index: failed to update db values %v", err), zap.String("pid", o.ID))
 	}
+	_ = o.db.SaveIndexedChannel(o.ChannelID, o.CurrentMessageID)
 }
 
 // getChat fetches a channel and it's access hash from it's botapi/tdlib id.

@@ -15,6 +15,7 @@ const (
 	CollectionNameJoinRequests = "JoinRequests"
 	CollectionNameJoinRequestsLogs = "JoinRequestsLogs"
 	CollectionNameBroadcasts   = "Broadcasts"
+	CollectionNameIndexedChannels = "IndexedChannels"
 
 	DefaultDatabaseName = "AutoFilterBot"
 )
@@ -99,6 +100,13 @@ type Database interface {
 	DeleteOperation(pid string) error
 	// GetSpellingSuggestions queries local DB files for fuzzy matching suggestions.
 	GetSpellingSuggestions(query string) ([]string, error)
+
+	// SaveIndexedChannel saves the last indexed message ID for a channel.
+	SaveIndexedChannel(channelID int64, lastMessageID int64) error
+	// GetIndexedChannel retrieves the last indexed message ID for a channel.
+	GetIndexedChannel(channelID int64) (int64, error)
+	// GetIndexOperationByChannel retrieves any active/paused index operation for a channel.
+	GetIndexOperationByChannel(channelID int64) (*model.Index, error)
 
 	// Broadcasts
 	SaveBroadcast(b *model.Broadcast) error

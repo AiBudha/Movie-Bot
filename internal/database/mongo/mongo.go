@@ -34,6 +34,8 @@ type Client struct {
 	opsCollection *mongo.Collection
 	// broadcastCollection stores broadcast history.
 	broadcastCollection *mongo.Collection
+	// Collection of channel indexing state (last message index).
+	indexedChannelsCollection *mongo.Collection
 
 	botId  int64
 	ctx    context.Context
@@ -127,6 +129,7 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 		joinRequestsCollection:     dataBase.Collection(database.CollectionNameJoinRequests),
 		joinRequestsLogsCollection: dataBase.Collection(database.CollectionNameJoinRequestsLogs),
 		broadcastCollection:        dataBase.Collection(database.CollectionNameBroadcasts),
+		indexedChannelsCollection:  dataBase.Collection(database.CollectionNameIndexedChannels),
 	}
 
 	return client, nil

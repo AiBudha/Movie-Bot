@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"autofilterbot/internal/functions"
+	"autofilterbot/internal/index"
 	"autofilterbot/internal/model"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -98,16 +99,94 @@ func AutoDetectIndex(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 func PromptIndex(bot *gotgbot.Bot, ctx *ext.Context, channelID, messageID int64) error {
 	m := ctx.EffectiveMessage
+	chatId := ctx.EffectiveChat.Id
 	
 	// Check if already an operation exists to avoid duplicates
-	// (Optional improvement, but let's keep it simple for now)
+	existingOps, err := _app.DB.GetIndexOperationByChannel(channelID)
+	if err == nil && existingOps != nil {
+		plainChannelID := index.TDLibChannelIDToPlain(channelID)
+		text := fmt.Sprintf(`
+<b><u>Index Operation Overview</u></b>
+
+An indexing operation is already active or configured for this channel.
+
+<b>Process ID</b>: <code>%s</code>
+<b>Channel</b>: <code>%d</code>
+<b>Start</b>: <a href='https://t.me/c/%d/%d'>%d</a>
+<b>End</b>: `, existingOps.ID, existingOps.ChannelID, plainChannelID, existingOps.StartMessageID, existingOps.StartMessageID)
+
+		if existingOps.EndMessageID != 0 {
+			text += fmt.Sprintf("<a href='https://t.me/c/%d/%d'>%d</a>\n<b>Total Messages</b>: %d", plainChannelID, existingOps.EndMessageID, existingOps.EndMessageID, existingOps.EndMessageID-existingOps.StartMessageID)
+		} else {
+			text += "<i>Until Latest</i>"
+		}
+
+		text += fmt.Sprintf("\n<b>Current Progress</b>: <a href='https://t.me/c/%d/%d'>%d</a>", plainChannelID, existingOps.CurrentMessageID, existingOps.CurrentMessageID)
+
+		keyboard := [][]gotgbot.InlineKeyboardButton{{existingOps.CancelButton(), existingOps.ModifyButton()}}
+		if existingOps.IsPaused {
+			keyboard[0] = append(keyboard[0], existingOps.StartButton())
+		} else {
+			keyboard[0] = append(keyboard[0], existingOps.PauseButton())
+		}
+
+		if ctx.CallbackQuery != nil {
+			_, _, err = ctx.CallbackQuery.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+				ParseMode:   gotgbot.ParseModeHTML,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+			})
+		} else {
+			_, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{
+				ParseMode:   gotgbot.ParseModeHTML,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+			})
+		}
+		return err
+	}
+
+	// Check if the channel was previously indexed to offer resume options
+	lastIndexedID, err := _app.DB.GetIndexedChannel(channelID)
+	if err == nil && lastIndexedID > 0 {
+		text := fmt.Sprintf(`
+<b>🔄 Channel Index Choice</b>
+
+This channel was previously indexed. The last indexed message ID is <code>%d</code>.
+
+Do you want to start indexing from the beginning or resume from the last indexed message?`, lastIndexedID)
+
+		keyboard := [][]gotgbot.InlineKeyboardButton{
+			{
+				{
+					Text:         "From Start 🔄",
+					CallbackData: fmt.Sprintf("index_choice|%d_1_%d_start", channelID, messageID),
+				},
+				{
+					Text:         "From Last Indexed ⏩",
+					CallbackData: fmt.Sprintf("index_choice|%d_1_%d_resume", channelID, messageID),
+				},
+			},
+		}
+
+		if ctx.CallbackQuery != nil {
+			_, _, err = ctx.CallbackQuery.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+				ParseMode:   gotgbot.ParseModeHTML,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+			})
+		} else {
+			_, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{
+				ParseMode:   gotgbot.ParseModeHTML,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+			})
+		}
+		return err
+	}
 
 	plainChannelID := channelID
 	if channelID < -1000000000000 {
 		plainChannelID = (channelID + 1000000000000) * -1
 	}
 
-	text := fmt.Sprintf("<b>📂 𝖣𝗈 𝖸𝗈𝗎 𝖶𝖺𝗇𝗍 𝖳𝗈 𝖨𝗇𝖽𝖾𝗑 𝖳𝗁𝗂𝗌 𝖢𝗁𝖺𝗇𝗇𝖾𝗅?</b>\n\n<b>🆔 𝖢𝗁𝖺𝗍 𝖨𝖣:</b> <code>%d</code>\n<b>📍 𝖫𝖺𝗌𝗍 𝖬𝖾𝗌𝗌𝖺𝗀𝖾:</b> <a href='https://t.me/c/%d/%d'>%d</a>", channelID, plainChannelID, messageID, messageID)
+	text := fmt.Sprintf("<b>📂 𝖣𝗈 𝖸𝗈𝗎 𝖶𝖺𝗇𝗍 𝖳𝗈 𝖨𝗇𝖽𝖾𝗑 𝖳𝗁𝗂𝗌 𝖢𝗁𝖺𝗇𝗇𝖾𝗅?</b>\n\n<b>🆔 𝖢𝗁𝖺𝗍 𝖨𝖣:</b> <code>%d</code>\n<b>📍 𝖫𝖺𝗌 𝖬𝖾𝗌𝗌𝖺𝗀𝖾:</b> <a href='https://t.me/c/%d/%d'>%d</a>", channelID, plainChannelID, messageID, messageID)
 
 	indexModel := model.Index{
 		ID:                    functions.RandString(6),
@@ -115,12 +194,12 @@ func PromptIndex(bot *gotgbot.Bot, ctx *ext.Context, channelID, messageID int64)
 		EndMessageID:          messageID,
 		CurrentMessageID:      1,
 		ChannelID:             channelID,
-		ProgressMessageChatID: ctx.EffectiveChat.Id,
-		ProgressMessageID:     0, // Will be updated if we send a new message, but for now we'll send a reply
+		ProgressMessageChatID: chatId,
+		ProgressMessageID:     0, // Will be updated if we send a new message
 		IsPaused:              true,
 	}
 
-	err := _app.DB.NewIndexOperation(&indexModel)
+	err = _app.DB.NewIndexOperation(&indexModel)
 	if err != nil {
 		_app.Log.Error("[autodetect] failed to create index operation", zap.Error(err))
 		return nil
@@ -135,10 +214,18 @@ func PromptIndex(bot *gotgbot.Bot, ctx *ext.Context, channelID, messageID int64)
 		indexModel.StartButton(),
 	}}
 
-	sentM, err := m.Reply(bot, text, &gotgbot.SendMessageOpts{
-		ParseMode:   gotgbot.ParseModeHTML,
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
-	})
+	var sentM *gotgbot.Message
+	if ctx.CallbackQuery != nil {
+		sentM, _, err = ctx.CallbackQuery.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+	} else {
+		sentM, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+	}
 	if err == nil && sentM != nil {
 		_app.DB.UpdateIndexOperation(indexModel.ID, map[string]any{"pmessage_id": sentM.MessageId})
 	}
