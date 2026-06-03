@@ -1013,8 +1013,6 @@ func SeasonCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 			expectedData := fmt.Sprintf("sn|%s_%d", uniqueId, season)
 			if btn.CallbackData == expectedData {
 				seasonButtons[rIdx][cIdx].Style = "success"
-			} else {
-				seasonButtons[rIdx][cIdx].Style = "primary"
 			}
 		}
 	}
@@ -1028,7 +1026,6 @@ func SeasonCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 			langRow = append(langRow, gotgbot.InlineKeyboardButton{
 				Text:         l,
 				CallbackData: fmt.Sprintf("lang|%s_%s", uniqueId, l),
-				Style:        "primary",
 			})
 			if len(langRow) == 2 {
 				buttons = append(buttons, langRow)
