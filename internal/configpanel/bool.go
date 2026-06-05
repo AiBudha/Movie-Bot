@@ -30,19 +30,34 @@ func BoolField(app AppPreview, fieldName string, description ...string) panel.Ca
 
 			s = fmt.Sprintf("<i><b>✅ %s has been Enabled !</b></i>", ctx.Page.DisplayName)
 		case OperationReset:
-			err := app.GetDB().ResetConfig(ctx.Bot.Id, fieldName)
+			err := app.GetDB().UpdateConfig(ctx.Bot.Id, fieldName, false)
 			if err != nil {
 				return "", nil, err
 			}
 
-			s = fmt.Sprintf("<i><b>✅ %s has been Reset !</b></i>", ctx.Page.DisplayName)
+			s = fmt.Sprintf("<i><b>✅ %s has been Disabled !</b></i>", ctx.Page.DisplayName)
 		default:
 			var s string
 			if len(description) != 0 {
-				s = "ℹ️ " + description[0]
+				s = "ℹ️ " + description[0] + "\n\n"
 			}
 
-			return s + fmt.Sprintf("<i>Use The Buttons Below to Enable/Disable %s</i>", ctx.Page.DisplayName),
+			var currentVal bool
+			if v, ok := app.GetConfig().ToMap()[fieldName]; ok {
+				if b, ok := v.(bool); ok {
+					currentVal = b
+				}
+			}
+
+			statusStr := "❌ Disabled"
+			if currentVal {
+				statusStr = "✅ Enabled"
+			}
+
+			s += fmt.Sprintf("⭕ <b>Current Status: %s</b>\n\n", statusStr)
+			s += fmt.Sprintf("<i>Use The Buttons Below to Enable/Disable %s</i>", ctx.Page.DisplayName)
+
+			return s,
 				[][]gotgbot.InlineKeyboardButton{{{Text: "ᴇɴᴀʙʟᴇ ✅", CallbackData: data.RemoveArgs().AddArg(OperationSet).ToString(), Style: "success"}, {Text: "ᴅɪsᴀʙʟᴇ ❌", CallbackData: data.RemoveArgs().AddArg(OperationReset).ToString(), Style: "danger"}}},
 				nil
 		}

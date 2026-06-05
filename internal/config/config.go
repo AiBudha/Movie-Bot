@@ -43,7 +43,7 @@ type Config struct {
 	MoviesText     string                          `json:"movies_text,omitempty" bson:"movies_text,omitempty"`
 	MoviesButtons  [][]button.InlineKeyboardButton `json:"movies_buttons,omitempty" bson:"movies_buttons,omitempty"`
 	// Poster feature toggle
-	PosterEnabled bool `json:"poster_enabled,omitempty" bson:"poster_enabled,omitempty"`
+	PosterEnabled *bool `json:"poster_enabled,omitempty" bson:"poster_enabled,omitempty"`
 	// Custom Series Message
 	SeriesText     string                          `json:"series_text,omitempty" bson:"series_text,omitempty"`
 	SeriesButtons  [][]button.InlineKeyboardButton `json:"series_buttons,omitempty" bson:"series_buttons,omitempty"`
@@ -159,11 +159,13 @@ Uploaded: {date}`
 
 // GetPosterEnabled returns whether poster sending is enabled (default true)
 func (c *Config) GetPosterEnabled() bool {
-    if s := os.Getenv("POSTER_ENABLED"); s != "" {
-        return s == "true" || s == "1" || s == "ON"
-    }
-    // Return the stored config value (default true should be set during config initialization)
-    return c.PosterEnabled
+	if s := os.Getenv("POSTER_ENABLED"); s != "" {
+		return s == "true" || s == "1" || s == "ON"
+	}
+	if c.PosterEnabled == nil {
+		return true
+	}
+	return *c.PosterEnabled
 }
 
 func (c *Config) GetFsubChannels() []model.Channel {

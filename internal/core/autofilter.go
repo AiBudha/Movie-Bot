@@ -600,18 +600,20 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	}
 
 	var posterUrl string
-	if len(allFiles) > 0 {
-		specificQuery := autofilter.ExtractBaseTitle(allFiles[0].FileName)
-		if !isSeries {
-			// Add year if available for movie
-			yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
-			if match := yearRegex.FindString(allFiles[0].FileName); match != "" {
-				specificQuery += " " + match
+	if _app.Config.GetPosterEnabled() {
+		if len(allFiles) > 0 {
+			specificQuery := autofilter.ExtractBaseTitle(allFiles[0].FileName)
+			if !isSeries {
+				// Add year if available for movie
+				yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+				if match := yearRegex.FindString(allFiles[0].FileName); match != "" {
+					specificQuery += " " + match
+				}
 			}
+			posterUrl = autofilter.GetPosterUrlWithType(specificQuery, isSeries)
+		} else {
+			posterUrl = autofilter.GetPosterUrlWithType(query, isSeries)
 		}
-		posterUrl = autofilter.GetPosterUrlWithType(specificQuery, isSeries)
-	} else {
-		posterUrl = autofilter.GetPosterUrlWithType(query, isSeries)
 	}
 	if posterUrl != "" {
 		msg, sendErr = bot.SendPhoto(sendChatID, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
@@ -876,7 +878,10 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if !g.IsSeries && g.Year != "" {
 			specificQuery = g.Title + " " + g.Year
 		}
-		posterUrl := autofilter.GetPosterUrlWithType(specificQuery, g.IsSeries)
+		var posterUrl string
+		if _app.Config.GetPosterEnabled() {
+			posterUrl = autofilter.GetPosterUrlWithType(specificQuery, g.IsSeries)
+		}
 
 		err = _app.Cache.Autofilter.Save(&autofilter.SearchResult{
 			UniqueId: uniqueId,
