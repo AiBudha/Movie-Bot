@@ -152,18 +152,18 @@ func (c *Config) GetGroupHelpMessage() *message.Message {
 ┊ /gsettings   - Open group settings panel (welcome & content locks)
 ┊ /connect     - Connect group to PM for private search
 ┊ /disconnect  - Disconnect group from PM
-┊ /setwelcome <text> - Set custom welcome message
+┊ /setwelcome &lt;text&gt; - Set custom welcome message
 ┊ /clearwelcome - Disable welcome message
-┊ /setrules <text> - Set group rules
+┊ /setrules &lt;text&gt; - Set group rules
 ┊ /clearrules - Delete group rules
 ┊ /rules - View group rules
 ┊ /locks - View lock status of content types
-┊ /lock <type> - Lock a content type (stickers, gifs, media, forwards, links)
-┊ /unlock <type> - Unlock a content type
-┊ /setflood <num> - Set flood control limit
-┊ /captcha <on/off> - Enable/disable CAPTCHA
-┊ /captchatime <seconds> - Set CAPTCHA timeout
-┊ /antiraid <on/off> - Enable/disable raid protection
+┊ /lock &lt;type&gt; - Lock a content type (stickers, gifs, media, forwards, links)
+┊ /unlock &lt;type&gt; - Unlock a content type
+┊ /setflood &lt;num&gt; - Set flood control limit
+┊ /captcha &lt;on/off&gt; - Enable/disable CAPTCHA
+┊ /captchatime &lt;seconds&gt; - Set CAPTCHA timeout
+┊ /antiraid &lt;on/off&gt; - Enable/disable raid protection
 ┊ /msgstats - View group statistics
 ╰ END
 ╭ MODERATION
@@ -179,7 +179,7 @@ func (c *Config) GetGroupHelpMessage() *message.Message {
 ╰ END
 ╭ ADMINISTRATION
 ┊ /promote /demote - Manage admin status
-┊ /title <text> - Set custom admin title
+┊ /title &lt;text&gt; - Set custom admin title
 ┊ /adminlist - List chat admins
 ┊ /anonadmin - Toggle anonymous admin check
 ╰ END`

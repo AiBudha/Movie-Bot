@@ -101,6 +101,67 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 		msg = _app.Config.GetPrivacyMessage()
 	case "copyright":
 		msg = _app.Config.GetCopyrightMessage()
+	case "uinfo":
+		userId := ctx.EffectiveUser.Id
+		user, err := _app.DB.GetUser(userId)
+		if err != nil {
+			_app.Log.Error("uinfo database error", zap.Error(err))
+			msg = &message.Message{
+				Text: "❌ Could not retrieve user information. Please try again later.",
+			}
+		} else {
+			createdAtStr := "N/A"
+			if user.CreatedAt != 0 {
+				createdAtStr = time.Unix(user.CreatedAt, 0).Format("2006-01-02 15:04:05 MST")
+			}
+
+			lastSearchAtStr := "N/A"
+			if user.LastSearchAt != 0 {
+				lastSearchAtStr = time.Unix(user.LastSearchAt, 0).Format("2006-01-02 15:04:05 MST")
+			}
+
+			var langStats strings.Builder
+			if len(user.LangStats) > 0 {
+				for lang, count := range user.LangStats {
+					langStats.WriteString(fmt.Sprintf("\n  ├ <b>%s</b>: %d searches", lang, count))
+				}
+			} else {
+				langStats.WriteString(" None")
+			}
+
+			text := fmt.Sprintf(`<b>👤 YOUR STORED INFORMATION</b>
+
+• <b>User ID:</b> <code>%d</code>
+• <b>First Name:</b> %s
+• <b>Last Name:</b> %s
+• <b>Username:</b> %s
+• <b>Referral Source:</b> <code>%s</code>
+• <b>Telegram Data Center (DC):</b> <code>%d</code>
+• <b>Language Code:</b> <code>%s</code>
+• <b>Country Code:</b> <code>%s</code>
+• <b>Created At:</b> <code>%s</code>
+• <b>Last Search At:</b> <code>%s</code>
+• <b>Search Language Stats:</b>%s`,
+				user.UserId,
+				htmlEscape(ctx.EffectiveUser.FirstName),
+				htmlEscape(ctx.EffectiveUser.LastName),
+				htmlEscape(ctx.EffectiveUser.Username),
+				htmlEscape(user.Source),
+				user.DC,
+				htmlEscape(user.Language),
+				htmlEscape(user.Country),
+				createdAtStr,
+				lastSearchAtStr,
+				langStats.String(),
+			)
+
+			msg = &message.Message{
+				Text: text,
+				Keyboard: [][]button.InlineKeyboardButton{{{
+					Text: "🗑️ Close", CallbackData: "close", Style: "danger",
+				}}},
+			}
+		}
 	case "stats": // failsafe
 		return Stats(bot, ctx)
 	case "fstats":
