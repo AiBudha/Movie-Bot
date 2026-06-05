@@ -182,7 +182,7 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("config"), ConfigPanel), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Equal("stats"), Stats), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Equal("fstats"), FStats), callbackQueryGroup)
-	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("index"), CbIndex), callbackQueryGroup)
+	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("index|"), CbIndex), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("index_choice"), CbIndexChoice), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("fsub_add"), AddToFsub), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Equal("fsub_verify"), FsubJoined), callbackQueryGroup)
