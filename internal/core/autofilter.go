@@ -47,7 +47,7 @@ func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
 				return err
 			}
 			if msg != nil && _app.Config.GetAutodeleteTime() != 0 {
-				_app.AutoDelete.SaveMessage(msg, time.Minute*time.Duration(_app.Config.AutodeleteTime))
+				_app.AutoDelete.SaveMessage(msg, time.Minute*time.Duration(_app.Config.GetAutodeleteTime()))
 			}
 			if ctx.CallbackQuery != nil {
 				c := ctx.CallbackQuery
@@ -333,8 +333,8 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	}
 
 	var warn string
-	if _app.Config.GetAutodeleteTime() != 0 {
-		warn = fmt.Sprintf("<blockquote>○ 𝖠𝗎𝗍𝗈-𝖣𝖾𝗅𝖾𝗍𝖾: <b>%d 𝗆𝗂𝗇𝗌</b></blockquote>", _app.Config.AutodeleteTime)
+	if delTime := _app.Config.GetAutodeleteTime(); delTime != 0 {
+		warn = fmt.Sprintf("<blockquote>○ 𝖠𝗎𝗍𝗈-𝖣𝖾𝗅𝖾𝗍𝖾: <b>%d 𝗆𝗂𝗇𝗌</b></blockquote>", delTime)
 	}
 
 	var (
