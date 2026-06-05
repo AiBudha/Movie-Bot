@@ -11,10 +11,10 @@ import (
 
 var (
 	seasonEpisodeRegex = regexp.MustCompile(`(?i)\bs(\d+)\s?e(\d+)\b|\bseason\s?(\d+)\s?episode\s?(\d+)\b|\b(\d+)x(\d+)\b`)
-	qualityRegex       = regexp.MustCompile(`(?i)(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1)`)
+	qualityRegex       = regexp.MustCompile(`(?i)(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1|\b(?:color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b)`)
 	seasonOnlyRegex    = regexp.MustCompile(`(?i)\bseason\s?(\d+)\b|\bs(\d+)\b`)
 	episodeOnlyRegex   = regexp.MustCompile(`(?i)\bepisode\s?(\d+)\b|\bep[._-]?\s?(\d+)\b|\be(\d{1,4})\b`)
-	yearRegex          = regexp.MustCompile(`\b(19\d\d|20[0-2]\d)\b`)
+	yearRegex          = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 )
 
 type MovieMetadata struct {
@@ -240,14 +240,17 @@ func DetectLanguages(files []File) []string {
 // quality tags, season/episode patterns, file extensions, and formatting artifacts.
 func ExtractBaseTitle(name string) string {
 	name = functions.CleanPromoFromName(name)
-	// Remove leading brackets/parentheses completely (e.g. [Cc], [Govt], etc.)
+	// Remove leading brackets/parentheses and promotional prefixes completely (e.g. [Cc], [Govt], Cc)
 	bracketRegex := regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)
+	promoPrefixRegex := regexp.MustCompile(`^(?i)\bcc\b[._\s-]*`)
 	for {
-		loc := bracketRegex.FindString(name)
-		if loc == "" {
+		oldName := name
+		name = bracketRegex.ReplaceAllString(name, "")
+		name = promoPrefixRegex.ReplaceAllString(name, "")
+		name = strings.TrimSpace(name)
+		if name == oldName {
 			break
 		}
-		name = strings.TrimSpace(name[len(loc):])
 	}
 
 	// Remove file extension

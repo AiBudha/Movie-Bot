@@ -34,6 +34,7 @@ func CreatePanel(app AppPreview) *panel.Panel {
 	p := panel.NewPanel()
 
 	p.AddPage(panel.NewPage("sizebtn", "Size Button").WithCallbackFunc(BoolField(app, config.FieldNameSizeButton)))
+	p.AddPage(panel.NewPage("poster", "Poster").WithCallbackFunc(BoolField(app, config.FieldNamePosterEnabled)))
 	p.AddPage(panel.NewPage("autodel", "Auto Delete").WithCallbackFunc(TimeField(app, config.FieldNameAutodeleteTime, []int{5, 10, 15, 20, 30, 45})))
 	p.AddPage(panel.NewPage("filedel", "File AutoDelete").WithCallbackFunc(TimeField(app, config.FieldNameFileAutoDelete, []int{5, 10, 15, 20, 30, 45})))
 
@@ -42,6 +43,12 @@ func CreatePanel(app AppPreview) *panel.Panel {
 	p.NewPage("moniterd", "Monitored Chans").WithCallbackFunc(MonitoredChannelsField(app))
 
 	p.AddPage(panel.NewPage("reschan", "Results Channel").WithCallbackFunc(ResultsChannelField(app)))
+
+	groupPage := panel.NewPage("group", "Group Defaults").WithContent("👥 Configure default settings for Group Chats.")
+	groupPage.NewSubPage("wtext", "Default Welcome Text").WithCallbackFunc(StringField(app, config.FieldNameDefaultWelcomeText, StringFieldOpts{Description: "Default welcome message text for new members. Supports {mention}, {title}, {first_name}, {id}."}))
+	groupPage.NewSubPage("wenable", "Default Welcome Status").WithCallbackFunc(BoolField(app, config.FieldNameDefaultWelcomeEnabled, "Toggle if welcome message is enabled by default in new groups.\n\n"))
+	p.AddPage(groupPage)
+
 
 	dbPage := panel.NewPage("db", "Database").WithContent("📂 Configure Database Settings from the Options Below.")
 	dbPage.NewSubPage("coll", "File Database").WithCallbackFunc(IntField(app, config.FieldNameCollectionIndex, IntFieldOpts{

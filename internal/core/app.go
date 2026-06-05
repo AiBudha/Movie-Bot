@@ -17,6 +17,7 @@ import (
 	"autofilterbot/internal/database/mongo"
 	"autofilterbot/internal/index"
 	"autofilterbot/internal/middleware"
+	"autofilterbot/internal/ott"
 	"autofilterbot/pkg/autodelete"
 	"autofilterbot/pkg/env"
 	"autofilterbot/pkg/log"
@@ -199,6 +200,8 @@ func Run(opts RunAppOptions) {
 	if appConfig.FileCollectionUpdater {
 		_app.DB.RunCollectionUpdater(ctx, logger)
 	}
+
+	ott.RunScheduler(ctx, &_app.App)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)

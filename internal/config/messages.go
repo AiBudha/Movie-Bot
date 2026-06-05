@@ -64,17 +64,16 @@ func (c *Config) GetAboutMessage() *message.Message {
 	if c.AboutText != "" {
 		text = c.AboutText
 	} else {
-		text = `<b>[ SYSTEM STATUS ]</b>
-
-> language   : {go_version}  
-> status     : active
-
-> os        : <code>{os}</code>  
-> database  : <code>{database}</code>  
-
-> version   : <code>v0.6</code>
-
-Latency <code>{latency}</code>`
+		text = `⌬ SYSTEM STATUS
+╭ CPU  : {cpu}
+┊ RAM  : {ram}
+┊ FREE : {free}
+┊ Language : {go_version}
+┊ os    : {os}
+┊ version : {go_version}
+┊ Latency      : {latency}
+┊ database     : {database}
+╰ UP   : {uptime}`
 	}
 
 	if len(c.AboutButtons) != 0 {
@@ -100,32 +99,35 @@ func (c *Config) GetHelpMessage() *message.Message {
 	if c.HelpText != "" {
 		text = c.HelpText
 	} else {
-		text = `
-<b>🖐️ 𝖧𝖾𝗋𝖾'𝗌 𝖳𝗐𝗈 𝖶𝖺𝗒𝗌 𝖸𝗈𝗎 𝖢𝖺𝗇 𝖴𝗌𝖾 𝖬𝖾. . .</b>
-
-✈️ <b>𝖨𝗇𝗅𝗂𝗇𝖾</b> : <i>Just Start Typing my Username into any Chat and get Results On The Fly</i>
-✍️ <b>𝖦𝗋𝗈𝗎𝗉</b> : <i>Add me to your Group Chat and Just Send the Name of the File you Want</i>
-
-🤖 <b>User Commands:</b>
-/start - check if I'm alive
-/about - learn a bit about me
-/help - get this message
-/movies - movie request format/instructions
-/series - series request format/instructions
-/stats - some number crushing
-/privacy - what data I steal
-/uinfo - get user data stored
-/id - if you know u know
-
-🍷 <b>Exclusive Commands:</b>
-/broadcast - spam users with ads
-/settings - customize me
-/batch - bunch up messages
-/genlink - link to single file
-/index - gather up files
-/delete - assassinate a file
-/deleteall - massacre matching files
-`
+		text = `⌬ HELP
+╭ USER COMMANDS
+┊ /start      - check if I'm alive
+┊ /about      - learn a bit about me
+┊ /help       - get this message
+┊ /movies     - movie request format/instructions
+┊ /series     - series request format/instructions
+┊ /stats      - some number crushing
+┊ /privacy    - what data I steal
+┊ /uinfo      - get user data stored
+┊ /id         - if you know u know
+┊ /formatting - formatting guide
+╰ END
+╭ OTT RELEASE COMMANDS
+┊ /latest      - browse latest movie & show releases
+┊ /subscribe   - subscribe to release updates in PM
+┊ /unsubscribe - unsubscribe from PM release updates
+┊ /platforms   - view list of supported OTT platforms
+╰ END
+╭ EXCLUSIVE COMMANDS
+┊ /broadcast - spam users with ads
+┊ /settings  - customize me
+┊ /batch     - bunch up messages
+┊ /genlink   - link to single file
+┊ /index     - gather up files
+┊ /delete    - assassinate a file
+┊ /deleteall - massacre matching files
+┊ /sendnow   - check for releases manually
+╰ END`
 	}
 
 	if len(c.HelpButtons) != 0 {
@@ -133,8 +135,57 @@ func (c *Config) GetHelpMessage() *message.Message {
 	} else {
 		buttons = [][]button.InlineKeyboardButton{
 			{{Text: "🎥 Movie Format", CallbackData: "cmd:movies", Style: "primary"}, {Text: "📺 Series Format", CallbackData: "cmd:series", Style: "primary"}},
-			{{Text: "« ʙᴀᴄᴋ", CallbackData: "cmd:start", Style: "primary"}, {Text: "ᴘʀɪᴠᴀᴄʏ", CallbackData: "cmd:privacy", Style: "primary"}},
+			{{Text: "🛡️ Group Help", CallbackData: "cmd:ghelp", Style: "primary"}, {Text: "ᴘʀɪᴠᴀᴄʏ", CallbackData: "cmd:privacy", Style: "primary"}},
+			{{Text: "« ʙᴀᴄᴋ", CallbackData: "cmd:start", Style: "primary"}},
 		}
+	}
+
+	return &message.Message{
+		Text:     text,
+		Keyboard: buttons,
+	}
+}
+
+func (c *Config) GetGroupHelpMessage() *message.Message {
+	text := `⌬ GROUP HELP
+╭ CONFIGURATION & CONNECTION
+┊ /gsettings   - Open group settings panel (welcome & content locks)
+┊ /connect     - Connect group to PM for private search
+┊ /disconnect  - Disconnect group from PM
+┊ /setwelcome <text> - Set custom welcome message
+┊ /clearwelcome - Disable welcome message
+┊ /setrules <text> - Set group rules
+┊ /clearrules - Delete group rules
+┊ /rules - View group rules
+┊ /locks - View lock status of content types
+┊ /lock <type> - Lock a content type (stickers, gifs, media, forwards, links)
+┊ /unlock <type> - Unlock a content type
+┊ /setflood <num> - Set flood control limit
+┊ /captcha <on/off> - Enable/disable CAPTCHA
+┊ /captchatime <seconds> - Set CAPTCHA timeout
+┊ /antiraid <on/off> - Enable/disable raid protection
+┊ /msgstats - View group statistics
+╰ END
+╭ MODERATION
+┊ /ban /unban - Ban or unban a user
+┊ /sban /dban /tban - Silent, Delete, or Temp ban
+┊ /kick /dkick /kickme - Kick, Delete kick, or self‑kick
+┊ /mute /unmute - Mute or unmute a user
+┊ /smute /dmute /tmute - Silent, Delete, or Temp mute
+┊ /warn /unwarn - Warn or reset warnings for a user
+┊ /dwarn /swarn /rmwarn - Delete warn, Silent warn, or reset warnings
+┊ /setwarnlimit /setwarnmode - Configure warn settings
+┊ /pin /unpin - Pin or unpin group messages
+╰ END
+╭ ADMINISTRATION
+┊ /promote /demote - Manage admin status
+┊ /title <text> - Set custom admin title
+┊ /adminlist - List chat admins
+┊ /anonadmin - Toggle anonymous admin check
+╰ END`
+
+	buttons := [][]button.InlineKeyboardButton{
+		{{Text: "« Back to Help", CallbackData: "cmd:help", Style: "primary"}, button.CloseLocal()},
 	}
 
 	return &message.Message{
@@ -267,19 +318,30 @@ func (c *Config) GetPrivacyMessage() *message.Message {
 	if c.PrivacyText != "" {
 		text = c.PrivacyText
 	} else {
-		text = `
+    text = `
 <blockquote expandable><b>Privacy Policy 📜</b>
-<i>This bot stores the <b>publicly</b> visible data of users that is <b>required</b> for the bot to operate.
+<i>This bot stores publicly visible data of users that is required for the bot to operate.</i>
 
 The following data of a user could be saved:
-‣ Id
-‣ Name
-‣ Username
-‣ Join Requests
+• <b>Id</b> – Telegram user ID used for identification.
+• <b>Name</b> – Full name as provided by the user.
+• <b>Username</b> – @username for mentions.
+• <b>Join Requests</b> – Timestamp when the user joined a group (if applicable).
 
-ℹ️ Use the /uinfo command with your user id to view data stored about you.</i>
-</blockquote>
-`
+<b>How the data is used</b>
+- To enforce force‑subscribe requirements.
+- To provide user‑specific statistics and preferences.
+- To allow admins to manage bans, warnings and other moderation actions.
+- To generate personalized messages (e.g., welcome text).
+
+<b>Data retention</b>
+All stored data is kept as long as the bot is running and the MongoDB instance remains. Users can request a full data export via the /uinfo command and can request data deletion by contacting the bot administrator.
+
+<b>Third‑party sharing</b>
+No user data is shared with third parties beyond the necessary Telegram API calls.
+
+For any concerns or data removal requests, please contact the bot maintainer.
+</blockquote>`
 	}
 
 	if len(c.PrivacyButtons) != 0 {
@@ -295,3 +357,27 @@ The following data of a user could be saved:
 		Keyboard: buttons,
 	}
 }
+func (c *Config) GetCopyrightMessage() *message.Message {
+	var (
+		text    string
+		buttons [][]button.InlineKeyboardButton
+	)
+
+	if c.CopyrightText != "" {
+		text = c.CopyrightText
+	} else {
+		text = `
+<blockquote expandable><b>Copyright Policy ©️</b>
+<i>This bot does not host any copyrighted content itself. All files are sourced from publicly available links shared by users. If you believe any content infringes your rights, please contact the bot maintainer to request removal.</i>
+</blockquote>`
+	}
+
+	if len(c.CopyrightButtons) != 0 {
+		buttons = c.CopyrightButtons
+	} else {
+		buttons = [][]button.InlineKeyboardButton{{{Text: "« Back", CallbackData: "cmd:help", Style: "primary"}, button.CloseLocal()}}
+	}
+
+	return &message.Message{Text: text, Keyboard: buttons}
+}
+

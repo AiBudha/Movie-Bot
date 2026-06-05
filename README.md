@@ -4,12 +4,39 @@ A powerful and customizable Telegram bot written in Go for automatically filteri
 
 ## Commands
 
+### Bot Administration & Files
+
 - `start` - Check if the bot is alive.
 - `help` - How to use the bot.
 - `about` - About the bot.
 - `settings` - Bot configuration (Admin only).
 - `index` - Import files from channels (Admin only).
 - `broadcast` - Send messages to all users (Admin only).
+- `platforms` - List supported streaming platforms.
+- `subscribe` - Subscribe to OTT updates in PM.
+- `unsubscribe` - Unsubscribe from OTT updates in PM.
+- `latest` - Get latest releases now with paginated buttons.
+- `sendnow` - Trigger background release check immediately (Admin only).
+
+### Group Moderation & Administration
+
+- `ban` / `unban` - Ban or unban a user in a group chat.
+- `mute` / `unmute` - Mute or unmute a user in a group chat.
+- `kick` / `kickme` - Kick a user from a group, or kick yourself.
+- `promote` / `demote` - Promote a user to administrator or demote them.
+- `title` - Set custom title for an administrator.
+- `admins` / `adminlist` - List administrators in the group chat.
+- `warn` / `unwarn` - Add or remove warning from a user.
+- `warns` - Display active warnings for a user.
+- `resetwarns` / `clearwarns` - Clear all warnings of a user.
+- `setwarnlimit` / `setwarnmode` - Configure warning limit and action type.
+- `rules` / `setrules` / `clearrules` - Show, set, or delete group chat rules.
+- `welcome` / `setwelcome` / `clearwelcome` - Customize or disable welcome greetings for new members.
+- `locks` / `lock` / `unlock` - Show, enable, or disable locks on specific message types.
+- `pin` / `unpin` - Pin or unpin messages in the group.
+- `captcha` / `captchatime` - Enable/disable captcha verification and configure timeout duration.
+- `antiraid` - Toggle anti-raid security protection.
+- `setflood` - Configure automatic anti-flood message threshold.
 
 ## Features
 
@@ -18,6 +45,9 @@ A powerful and customizable Telegram bot written in Go for automatically filteri
 - **Customizable:** Extensive configuration options via environment variables.
 - **Multi-Database Support:** Support for multiple MongoDB databases.
 - **Force Subscribe:** Optional requirement for users to subscribe to channels before using the bot.
+- **OTT Releases Tracker & Auto-Poster:** Scrapes new releases from TMDB, JustWatch GQL/Web, and OTTRelease.com.
+- **Background Release Scheduler:** Runs periodically and posts new releases to configured channels or chats.
+- **Daily Digest Generator:** Sends a daily summary of all movie/series releases automatically every 24 hours.
 
 ## Deployment
 
@@ -46,6 +76,12 @@ LOG_CHANNEL=-100xxxxxxxxxx
 # Telegram API credentials (for indexing/sessions)
 APP_ID=12345
 APP_HASH=your_telegram_app_hash
+
+# OTT Updates Configuration
+TMDB_API_KEY=your_tmdb_api_key_here
+JUSTWATCH_COUNTRY=IN
+UPDATE_INTERVAL_HOURS=2
+OTT_CHANNEL_ID=-100xxxxxxxxxx
 ```
 
 ---
@@ -116,6 +152,125 @@ If you prefer PM2 for process management:
    pm2 start ./bot --name "moviebot"
    ```
 3. Save the process list: `pm2 save`.
+
+---
+
+#### Detailed VPS Host Tutorial
+
+Deploying the bot on a fresh VPS (Ubuntu 20.04/22.04) is straightforward. Follow these steps:
+
+1. **Provision a VPS** – Choose a provider (DigitalOcean, Linode, Hetzner, etc.) and create a server with at least 1 CPU and 1 GB RAM.
+2. **Access the server** – Open an SSH session:
+   ```bash
+   ssh root@your-vps-ip
+   ```
+3. **Update the system** – Ensure packages are up‑to‑date:
+   ```bash
+   apt update && apt upgrade -y
+   ```
+4. **Install required tools** – Go, Docker, Git, and a process manager (systemd is built‑in):
+   ```bash
+   # Install Go (1.24+)
+   apt install -y golang-go
+   # Install Docker
+   apt install -y docker.io docker-compose
+   # Enable Docker services
+   systemctl enable --now docker
+   # Install Git
+   apt install -y git
+   ```
+5. **Create a non‑root user** (optional but recommended):
+   ```bash
+   adduser botuser
+   usermod -aG docker botuser
+   ```
+   Then switch to this user for future steps:
+   ```bash
+   su - botuser
+   ```
+6. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/Moviebot001-main.git
+   cd Moviebot001-main
+   ```
+7. **Configure environment variables** – Copy the example file and edit:
+   ```bash
+   cp .env.example .env
+   nano .env   # set BOT_TOKEN, ADMINS, MONGODB_URI, etc.
+   ```
+8. **Choose a deployment method** – The simplest is Docker Compose (see Method A). If you prefer a native binary, use the Systemd service (Method B) or the following manual steps:
+   ```bash
+   go build -o moviebot main.go
+   ./moviebot &   # runs in background; consider using tmux or screen
+   ```
+9. **Set up a firewall** (UFW) to allow only required ports:
+   ```bash
+   apt install -y ufw
+   ufw allow OpenSSH
+   ufw allow 10000/tcp   # optional health‑check port
+   ufw enable
+   ```
+10. **Verify the bot is running** – Check logs or use the Telegram bot commands.
+
+You can now switch back to any of the earlier methods (Docker Compose, Systemd, PM2) for more robust process management.
+
+---
+#### Fedora VPS Host Tutorial
+
+Deploy the bot on a Fedora (38/39) VPS.
+
+1. **Provision a VPS** – Choose any provider and create a server with at least 1 CPU and 1 GB RAM.
+2. **SSH into the server**:
+   ```bash
+   ssh root@your-vps-ip
+   ```
+3. **Update the system**:
+   ```bash
+   dnf update -y
+   ```
+4. **Install required packages** – Go, Docker, Git, and firewalld:
+   ```bash
+   # Install Go (1.24+)
+   dnf install -y golang
+   # Install Docker
+   dnf install -y docker docker-compose
+   systemctl enable --now docker
+   # Install Git
+   dnf install -y git
+   # Enable firewalld
+   dnf install -y firewalld
+   systemctl enable --now firewalld
+   ```
+5. **Create a non‑root user** (optional):
+   ```bash
+   adduser botuser
+   usermod -aG docker botuser
+   su - botuser
+   ```
+6. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/Moviebot001-main.git
+   cd Moviebot001-main
+   ```
+7. **Set environment variables**:
+   ```bash
+   cp .env.example .env
+   nano .env   # edit BOT_TOKEN, ADMINS, MONGODB_URI, etc.
+   ```
+8. **Deploy** – Use Docker Compose (Method A) or build the binary:
+   ```bash
+   go build -o moviebot main.go
+   ./moviebot &
+   ```
+9. **Configure firewall** – Allow SSH and optional health‑check port:
+   ```bash
+   firewall-cmd --add-service=ssh --permanent
+   firewall-cmd --add-port=10000/tcp --permanent   # optional
+   firewall-cmd --reload
+   ```
+10. **Verify** – Check Docker logs or run the bot commands in Telegram.
+
+You can now switch to any of the earlier deployment methods (Docker Compose, Systemd, PM2) for production‑grade management.
 
 ---
 

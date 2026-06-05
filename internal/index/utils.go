@@ -74,12 +74,23 @@ const (
 //   - bool: indicates wether given error is a floodwait.
 //   - err: error during parsing (not api errors)
 func ParseMtProtoFloodwait(err error) (int64, bool, error) {
-	if !strings.Contains(err.Error(), FloodwaitErrorRPCString) {
+	errStr := err.Error()
+	errUpper := strings.ToUpper(errStr)
+	if !strings.Contains(errUpper, FloodwaitErrorRPCString) && !strings.Contains(errUpper, "FLOOD_WAIT") && !strings.Contains(errUpper, "FLOODWAIT") {
 		return 0, false, nil
 	}
 
-	matches := floodRegex.FindStringSubmatch(err.Error())
+	matches := floodRegex.FindStringSubmatch(errStr)
 	if len(matches) < 2 {
+		// Try parsing number of seconds directly from FLOOD_WAIT_(\d+)
+		floodWaitNumRegex := regexp.MustCompile(`FLOOD_WAIT_(\d+)`)
+		numMatches := floodWaitNumRegex.FindStringSubmatch(errUpper)
+		if len(numMatches) >= 2 {
+			seconds, err := strconv.ParseInt(numMatches[1], 10, 64)
+			if err == nil {
+				return seconds, true, nil
+			}
+		}
 		return 0, true, fmt.Errorf("no seconds found in the input string")
 	}
 

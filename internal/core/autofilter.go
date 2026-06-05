@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +24,18 @@ import (
 	"go.uber.org/zap"
 )
 
+func cleanCompareString(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, ".", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type != "private" {
+		_ = _app.DB.IncrementGroupSearchCount(ctx.EffectiveChat.Id)
+	}
 
 	// 2. Wrap search in a job and push to queue
 	job := Job{
@@ -71,6 +83,7 @@ func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 // autofilter runs the autofilter task and returns the sent message.
 func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
+	_app.Log.Info("_autofilter function called")
 	var (
 		query        string
 		inputMessage gotgbot.MaybeInaccessibleMessage
@@ -169,7 +182,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		}
 
 		if !fromStartSearch && autofilter.IsBadQuery(text, m.Entities) {
-			_app.Log.Debug("autofilter: bad query", zap.String("text", text), zap.Any("entities", m.Entities))
+			_app.Log.Warn("autofilter: bad query", zap.String("text", text), zap.Any("entities", m.Entities))
 			return nil, nil
 		}
 
@@ -178,6 +191,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		inputMessage = m
 		query = text
 		fromUser = m.From
+		_app.Log.Info("_autofilter message query parsed", zap.String("query", query), zap.Bool("fromStartSearch", fromStartSearch))
 	default:
 		_app.Log.Warn("autofilter: unsupported update type", zap.Int64("update_id", ctx.UpdateId))
 		return nil, nil
@@ -243,6 +257,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	}
 
 	files = processSearchResults(files)
+	_app.Log.Info("_autofilter search result retrieved", zap.String("query", query), zap.Int("files_count", len(files)))
 
 	if len(files) == 0 {
 		// 1. Try a local database fuzzy spelling search first (so suggestions are actual files in the DB)
@@ -337,6 +352,155 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	searchType := autofilter.DetectType(allFiles)
 	isSeries := searchType == "series"
 
+	if !isSeries {
+		type movieGroup struct {
+			Title string
+			Year  string
+		}
+		var movieGroups []movieGroup
+		seenMovie := make(map[string]bool)
+
+		for _, f := range allFiles {
+			title := autofilter.ExtractBaseTitle(f.FileName)
+			if title == "" {
+				continue
+			}
+
+			// Extract year
+			year := ""
+			yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+			if match := yearRegex.FindString(f.FileName); match != "" {
+				year = match
+			}
+
+			key := strings.ToLower(title)
+			if year != "" {
+				key += "_" + year
+			}
+
+			if !seenMovie[key] {
+				seenMovie[key] = true
+				movieGroups = append(movieGroups, movieGroup{Title: title, Year: year})
+			}
+		}
+
+		if len(movieGroups) > 1 {
+			// Check if the query matches one of the groups exactly to avoid selection loops
+			matchedGroupIdx := -1
+			normalizedQuery := cleanCompareString(query)
+			for idx, mg := range movieGroups {
+				specificQuery := mg.Title
+				if mg.Year != "" {
+					specificQuery = mg.Title + " " + mg.Year
+				}
+				if cleanCompareString(specificQuery) == normalizedQuery {
+					matchedGroupIdx = idx
+					break
+				}
+			}
+
+			if matchedGroupIdx != -1 {
+				// Filter files to only contain files from the matched movie group
+				targetMg := movieGroups[matchedGroupIdx]
+				var filteredFiles []autofilter.Files
+				for _, page := range files {
+					var filteredPage autofilter.Files
+					for _, f := range page {
+						title := autofilter.ExtractBaseTitle(f.FileName)
+						year := ""
+						yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+						if match := yearRegex.FindString(f.FileName); match != "" {
+							year = match
+						}
+
+						specificQuery := title
+						if year != "" {
+							specificQuery = title + " " + year
+						}
+
+						if cleanCompareString(specificQuery) == normalizedQuery {
+							filteredPage = append(filteredPage, f)
+						}
+					}
+					if len(filteredPage) > 0 {
+						filteredFiles = append(filteredFiles, filteredPage)
+					}
+				}
+
+				if len(filteredFiles) > 0 {
+					files = filteredFiles
+					// Re-evaluate allFiles and movieGroups since we filtered
+					allFiles = nil
+					for _, page := range files {
+						allFiles = append(allFiles, page...)
+					}
+					movieGroups = []movieGroup{targetMg}
+				}
+			}
+		}
+
+		if len(movieGroups) > 1 {
+			// Show movie choices
+			text := fmt.Sprintf("🍿 <b>Multiple movies found matching:</b> <code>%s</code>\n\n<i>Please select the correct movie below to get the files and poster:</i>", query)
+			if _app.Config.GetAutodeleteTime() != 0 {
+				text += fmt.Sprintf("\n\n<blockquote>○ 𝖠𝗎𝗍𝗈-𝖣𝖾𝗅𝖾𝗍𝖾: <b>%d 𝗆𝗂𝗇𝗌</b></blockquote>", _app.Config.GetAutodeleteTime())
+			}
+
+			var userId int64
+			if fromUser != nil {
+				userId = fromUser.Id
+			}
+
+			choiceButtons := [][]gotgbot.InlineKeyboardButton{}
+			limit := 10
+			if len(movieGroups) < limit {
+				limit = len(movieGroups)
+			}
+			for i := 0; i < limit; i++ {
+				mg := movieGroups[i]
+				label := mg.Title
+				if mg.Year != "" {
+					label = fmt.Sprintf("🎬 %s (%s)", mg.Title, mg.Year)
+				} else {
+					label = fmt.Sprintf("🎬 %s", mg.Title)
+				}
+
+				specificQuery := mg.Title
+				if mg.Year != "" {
+					specificQuery = mg.Title + " " + mg.Year
+				}
+				cleanSug := strings.ReplaceAll(specificQuery, "(", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, ")", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, "[", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, "]", " ")
+				cleanSug = strings.Join(strings.Fields(cleanSug), " ")
+
+				callLimit := 64 - len("suggest|") - len(fmt.Sprintf("_%d", userId))
+				if len(cleanSug) > callLimit {
+					cleanSug = cleanSug[:callLimit]
+				}
+
+				choiceButtons = append(choiceButtons, []gotgbot.InlineKeyboardButton{{
+					Text:         label,
+					CallbackData: fmt.Sprintf("suggest|%s_%d", cleanSug, userId),
+				}})
+			}
+			choiceButtons = append(choiceButtons, []gotgbot.InlineKeyboardButton{button.Close(userId)})
+
+			var replyMarkup gotgbot.InlineKeyboardMarkup
+			replyMarkup.InlineKeyboard = choiceButtons
+
+			sentMsg, err := bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
+				ReplyParameters: &gotgbot.ReplyParameters{
+					MessageId: inputMessage.GetMessageId(),
+				},
+				ReplyMarkup: replyMarkup,
+				ParseMode:   gotgbot.ParseModeHTML,
+			})
+			return sentMsg, err
+		}
+	}
+
 	if isSeries {
 		// Season row
 		seasonButtons := autofilter.Files(allFiles).ProcessSeasons(uniqueId)
@@ -386,7 +550,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	}
 
 	// Footer Action Row 1
-	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
 	if _app.Config.NewMoviesUrl != "" {
 		newMoviesBtn.Url = _app.Config.NewMoviesUrl
 		newMoviesBtn.CallbackData = ""
@@ -435,7 +599,20 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		}
 	}
 
-	posterUrl := autofilter.GetPosterUrlWithType(query, isSeries)
+	var posterUrl string
+	if len(allFiles) > 0 {
+		specificQuery := autofilter.ExtractBaseTitle(allFiles[0].FileName)
+		if !isSeries {
+			// Add year if available for movie
+			yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+			if match := yearRegex.FindString(allFiles[0].FileName); match != "" {
+				specificQuery += " " + match
+			}
+		}
+		posterUrl = autofilter.GetPosterUrlWithType(specificQuery, isSeries)
+	} else {
+		posterUrl = autofilter.GetPosterUrlWithType(query, isSeries)
+	}
 	if posterUrl != "" {
 		msg, sendErr = bot.SendPhoto(sendChatID, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
 			Caption: text,
@@ -593,9 +770,10 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		allFiles = allFiles[:50]
 	}
 
-	// Group files by their base title to show distinct titles with unique posters
+	// Group files by their base title (+ year for movies) to show distinct titles with unique posters
 	type titleGroup struct {
 		Title    string
+		Year     string
 		IsSeries bool
 		Count    int
 	}
@@ -608,16 +786,30 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 			baseTitle = strings.Title(query)
 		}
 
+		isSeries := autofilter.IsSeriesFile(f.FileName)
+		year := ""
+		if !isSeries {
+			yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+			if match := yearRegex.FindString(f.FileName); match != "" {
+				year = match
+			}
+		}
+
 		key := strings.ToLower(baseTitle)
+		if year != "" {
+			key += "_" + year
+		}
+
 		if g, ok := seen[key]; ok {
 			g.Count++
-			if !g.IsSeries && autofilter.IsSeriesFile(f.FileName) {
+			if !g.IsSeries && isSeries {
 				g.IsSeries = true
 			}
 		} else {
 			seen[key] = &titleGroup{
 				Title:    baseTitle,
-				IsSeries: autofilter.IsSeriesFile(f.FileName),
+				Year:     year,
+				IsSeries: isSeries,
 				Count:    1,
 			}
 			orderedTitles = append(orderedTitles, key)
@@ -639,7 +831,19 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 			if baseTitle == "" {
 				baseTitle = strings.Title(query)
 			}
-			if strings.ToLower(baseTitle) == key {
+			isSeries := autofilter.IsSeriesFile(f.FileName)
+			year := ""
+			if !isSeries {
+				yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+				if match := yearRegex.FindString(f.FileName); match != "" {
+					year = match
+				}
+			}
+			fileKey := strings.ToLower(baseTitle)
+			if year != "" {
+				fileKey += "_" + year
+			}
+			if fileKey == key {
 				groupFiles = append(groupFiles, f)
 			}
 		}
@@ -658,15 +862,25 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if g.IsSeries {
 			mediaType = "Series"
 		}
+
+		displayTitle := g.Title
+		if !g.IsSeries && g.Year != "" {
+			displayTitle = fmt.Sprintf("%s (%s)", g.Title, g.Year)
+		}
 		description := fmt.Sprintf("📂 %s • %d files available", mediaType, len(groupAllFiles))
 
 		var buttons [][]gotgbot.InlineKeyboardButton
 		uniqueId := functions.RandString(15)
-		posterUrl := autofilter.GetPosterUrlWithType(g.Title, g.IsSeries)
+
+		specificQuery := g.Title
+		if !g.IsSeries && g.Year != "" {
+			specificQuery = g.Title + " " + g.Year
+		}
+		posterUrl := autofilter.GetPosterUrlWithType(specificQuery, g.IsSeries)
 
 		err = _app.Cache.Autofilter.Save(&autofilter.SearchResult{
 			UniqueId: uniqueId,
-			Query:    g.Title,
+			Query:    specificQuery,
 			FromUser: iq.From.Id,
 			ChatID:   0,
 			Files:    pagedGroupFiles,
@@ -718,7 +932,7 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		buttons = append(buttons, fileButtons...)
 
 		// Footer Action Row 1
-		newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+		newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
 		if _app.Config.NewMoviesUrl != "" {
 			newMoviesBtn.Url = _app.Config.NewMoviesUrl
 			newMoviesBtn.CallbackData = ""
@@ -737,16 +951,16 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 		// Footer Action Row 2
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{
-			{Text: "📢 Share", SwitchInlineQuery: &g.Title, Style: "success"},
+			{Text: "📢 Share", SwitchInlineQuery: &specificQuery, Style: "success"},
 			{Text: "❌ Close", CallbackData: "close", Style: "danger"},
-			{Text: "♻️ Reset", CallbackData: "reset|" + g.Title, Style: "primary"},
+			{Text: "♻️ Reset", CallbackData: "reset|" + specificQuery, Style: "primary"},
 		})
 
 		replyMarkup := &gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: buttons,
 		}
 
-		caption := fmt.Sprintf("<b>🎬 %s</b>\n📂 <i>%s • %d files available</i>\n\n⚡️ 𝖲𝖾𝗅𝖾𝖼𝗍 𝗍𝗁𝖾 𝖿𝗂𝗅𝖾 𝗒𝗈υ 𝗐𝖺𝗇𝗍 𝖻𝖾𝗅𝗈𝗐:", g.Title, mediaType, len(groupAllFiles))
+		caption := fmt.Sprintf("<b>🎬 %s</b>\n📂 <i>%s • %d files available</i>\n\n⚡️ 𝖲𝖾𝗅𝖾𝖼𝗍 𝗍𝗁𝖾 𝖿𝗂𝗅𝖾 𝗒𝗈υ 𝗐𝖺𝗇𝗍 𝖻𝖾𝗅𝗈𝗐:", displayTitle, mediaType, len(groupAllFiles))
 
 		resultId := fmt.Sprintf("title_%d_%s", i, key)
 
@@ -755,7 +969,7 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 				Id:           resultId,
 				PhotoUrl:     posterUrl,
 				ThumbnailUrl: posterUrl,
-				Title:        g.Title,
+				Title:        displayTitle,
 				Description:  description,
 				Caption:      caption,
 				ParseMode:    gotgbot.ParseModeHTML,
@@ -768,7 +982,7 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 			}
 			results = append(results, gotgbot.InlineQueryResultArticle{
 				Id:                  resultId,
-				Title:               g.Title,
+				Title:               displayTitle,
 				Description:         description,
 				InputMessageContent: msgContent,
 				ReplyMarkup:         replyMarkup,
@@ -1080,7 +1294,7 @@ func SeasonCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 	buttons = append(buttons, navBtns)
 
 	// Footer Action Row 1 (Links)
-	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
 	if _app.Config.NewMoviesUrl != "" {
 		newMoviesBtn.Url = _app.Config.NewMoviesUrl
 		newMoviesBtn.CallbackData = ""

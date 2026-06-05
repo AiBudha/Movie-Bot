@@ -54,7 +54,7 @@ func ProcessFiles(files Files, chatId int64, botUsername string, opts ProcessFil
 
 		if chatId > 0 {
 			// Private chat: Send directly via callback
-			btn = gotgbot.InlineKeyboardButton{Text: btnText, CallbackData: "sendfile|" + f.UniqueId, Style: "primary"}
+			btn = gotgbot.InlineKeyboardButton{Text: btnText, CallbackData: "sendfile|" + f.UniqueId}
 		} else {
 			// Group or unknown: Use start URL
 			url := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, URLData{
@@ -62,7 +62,7 @@ func ProcessFiles(files Files, chatId int64, botUsername string, opts ProcessFil
 				ChatId:       chatId,
 				HasShortener: hasShortener,
 			}.Encode())
-			btn = gotgbot.InlineKeyboardButton{Text: btnText, Url: url, Style: "primary"}
+			btn = gotgbot.InlineKeyboardButton{Text: btnText, Url: url}
 		}
 
 		result = append(result, []gotgbot.InlineKeyboardButton{btn})
@@ -91,7 +91,7 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 
 	// 4. Extract year
 	year := ""
-	yearRegex := regexp.MustCompile(`\b(19\d\d|20[0-2]\d)\b`)
+	yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	if match := yearRegex.FindString(cleanedName); match != "" {
 		year = match
 	}
@@ -161,6 +161,19 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 		}
 	}
 
+	// Extract version/edition
+	version := ""
+	versionRegex := regexp.MustCompile(`(?i)\b(color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b`)
+	if match := versionRegex.FindString(cleanedName); match != "" {
+		vUpper := strings.ToUpper(match)
+		switch vUpper {
+		case "BW", "B&W", "IMAX", "DC", "SE":
+			version = vUpper
+		default:
+			version = strings.Title(strings.ToLower(match))
+		}
+	}
+
 	// 8. Extract clean title
 	title := ExtractBaseTitle(fileName)
 	bracketRegex := regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)
@@ -202,6 +215,9 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 	}
 	if quality != "" {
 		info = append(info, quality)
+	}
+	if version != "" {
+		info = append(info, version)
 	}
 
 	infoStr := strings.Join(info, " • ")
@@ -435,10 +451,14 @@ func (files Files) SelectMenu(uniqueId string, pageIndex int) [][]gotgbot.Inline
 	keyboard := make([][]gotgbot.InlineKeyboardButton, 0, len(files))
 
 	for _, f := range files {
-		keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{
+		btn := gotgbot.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%s[%s] %s", tick(f.IsSelected), functions.FileSizeToString(f.FileSize), CleanFileNameForDisplay(f.FileName)),
 			CallbackData: fmt.Sprintf("sel|%s_%d_%s", uniqueId, pageIndex, f.UniqueId),
-		}})
+		}
+		if f.IsSelected {
+			btn.Style = "primary"
+		}
+		keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{btn})
 	}
 
 	return keyboard

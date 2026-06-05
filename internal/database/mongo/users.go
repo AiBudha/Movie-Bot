@@ -81,6 +81,27 @@ func (c *Client) GetAllUsers() (database.Cursor, error) {
 	return c.userCollection.Find(c.ctx, bson.M{})
 }
 
+// GetAllUserIDs returns a slice of all user IDs using projection.
+func (c *Client) GetAllUserIDs() ([]int64, error) {
+	projection := bson.M{"_id": 1}
+	cursor, err := c.userCollection.Find(c.ctx, bson.M{}, options.Find().SetProjection(projection))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(c.ctx)
+
+	var ids []int64
+	for cursor.Next(c.ctx) {
+		var doc struct {
+			ID int64 `bson:"_id"`
+		}
+		if err := cursor.Decode(&doc); err == nil {
+			ids = append(ids, doc.ID)
+		}
+	}
+	return ids, nil
+}
+
 // idFilter creates a basic bson filter to find documents with matching _id.
 func idFilter(id interface{}) bson.D {
 	return bson.D{{Key: "_id", Value: id}}
@@ -112,4 +133,19 @@ func (c *Client) GetUserFsubMessage(userId int64) (int64, error) {
 		return 0, err
 	}
 	return user.FsubMessageID, nil
+}
+
+func (c *Client) SetUserConnection(userId int64, chatID int64) error {
+	filter := idFilter(userId)
+	update := bson.M{"$set": bson.M{"connected_chat_id": chatID}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+func (c *Client) GetUserConnection(userId int64) (int64, error) {
+	user, err := c.GetUser(userId)
+	if err != nil {
+		return 0, err
+	}
+	return user.ConnectedChatID, nil
 }

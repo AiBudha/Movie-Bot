@@ -36,9 +36,14 @@ type Config struct {
 	// Custom Privacy Message
 	PrivacyText    string                          `json:"privacy_text,omitempty" bson:"privacy_text,omitempty"`
 	PrivacyButtons [][]button.InlineKeyboardButton `json:"privacy_buttons,omitempty" bson:"privacy_buttons,omitempty"`
+	// Custom Copyright Message
+	CopyrightText    string                          `json:"copyright_text,omitempty" bson:"copyright_text,omitempty"`
+	CopyrightButtons [][]button.InlineKeyboardButton `json:"copyright_buttons,omitempty" bson:"copyright_buttons,omitempty"`
 	// Custom Movies Message
 	MoviesText     string                          `json:"movies_text,omitempty" bson:"movies_text,omitempty"`
 	MoviesButtons  [][]button.InlineKeyboardButton `json:"movies_buttons,omitempty" bson:"movies_buttons,omitempty"`
+	// Poster feature toggle
+	PosterEnabled bool `json:"poster_enabled,omitempty" bson:"poster_enabled,omitempty"`
 	// Custom Series Message
 	SeriesText     string                          `json:"series_text,omitempty" bson:"series_text,omitempty"`
 	SeriesButtons  [][]button.InlineKeyboardButton `json:"series_buttons,omitempty" bson:"series_buttons,omitempty"`
@@ -100,9 +105,33 @@ type Config struct {
 	// Monitored/Index Channels
 	FileChannels []int64 `json:"file_channels,omitempty" bson:"file_channels,omitempty"`
 
+	// Default Group Settings
+	DefaultWelcomeText    string          `json:"def_welcome_text,omitempty" bson:"def_welcome_text,omitempty"`
+	DefaultWelcomeEnabled bool            `json:"def_welcome_enabled" bson:"def_welcome_enabled"`
+	DefaultLocks          map[string]bool `json:"def_locks,omitempty" bson:"def_locks,omitempty"`
+
 	// cached value from ToMap, updated using UpdateMap
 	cachedMap map[string]any
 }
+
+func (c *Config) GetDefaultWelcomeText() string {
+	if c.DefaultWelcomeText != "" {
+		return c.DefaultWelcomeText
+	}
+	return "Welcome {mention} to {title}!"
+}
+
+func (c *Config) GetDefaultWelcomeEnabled() bool {
+	return c.DefaultWelcomeEnabled
+}
+
+func (c *Config) GetDefaultLocks() map[string]bool {
+	if c.DefaultLocks == nil {
+		return make(map[string]bool)
+	}
+	return c.DefaultLocks
+}
+
 
 func (c *Config) GetShortener() shortener.Shortener {
 	return c.Shortener
@@ -126,6 +155,15 @@ func (c *Config) GetFileDetailsTemplate() string {
 Size: {file_size}
 Type: {file_type}
 Uploaded: {date}`
+}
+
+// GetPosterEnabled returns whether poster sending is enabled (default true)
+func (c *Config) GetPosterEnabled() bool {
+    if s := os.Getenv("POSTER_ENABLED"); s != "" {
+        return s == "true" || s == "1" || s == "ON"
+    }
+    // Return the stored config value (default true should be set during config initialization)
+    return c.PosterEnabled
 }
 
 func (c *Config) GetFsubChannels() []model.Channel {

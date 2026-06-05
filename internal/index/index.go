@@ -44,6 +44,9 @@ type Operation struct {
 	completedSignal chan byte // notifies goroutines linked to the operation of completion
 
 	pacingDelayMs int64 // dynamic pacing control
+
+	floodMu        sync.Mutex
+	floodWaitUntil time.Time
 }
 
 // NewOperation creates a new index operation and context to pass to *Operation.Run.
@@ -285,22 +288,50 @@ func (o *Operation) run(ctx context.Context) {
 
 					var rawMsgs interface{}
 					var err error
-					for retries := 0; retries < 5; retries++ {
+					retries := 0
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-o.completedSignal:
+							return
+						default:
+						}
+
+						// Check if we are currently in a global floodwait block
+						o.floodMu.Lock()
+						until := o.floodWaitUntil
+						o.floodMu.Unlock()
+						if time.Now().Before(until) {
+							sleepDur := time.Until(until)
+							o.log.Info("index: worker waiting for active global floodwait", zap.Int("worker", workerID), zap.Duration("duration", sleepDur))
+							time.Sleep(sleepDur)
+						}
+
 						rawMsgs, err = c.ChannelsGetMessages(inputChannel, messageChunk)
 						if err == nil {
 							break
 						}
+
 						s, ok, _ := ParseMtProtoFloodwait(err)
 						if ok {
 							if s == 0 {
 								s = 30 // Safe fallback if parsing fails but error is FLOOD_WAIT
 							}
 							o.log.Warn("index: floodwait detected, retrying chunk", zap.Int64("seconds", s), zap.Int("worker", workerID))
-							
+
+							// Set global floodwait block
+							o.floodMu.Lock()
+							wakeTime := time.Now().Add(time.Second * time.Duration(s+1))
+							if wakeTime.After(o.floodWaitUntil) {
+								o.floodWaitUntil = wakeTime
+							}
+							o.floodMu.Unlock()
+
 							// Dynamic backoff: Increase pacing delay on floodwait
 							o.mu.Lock()
-							if o.pacingDelayMs < 1000 {
-								o.pacingDelayMs += 150
+							if o.pacingDelayMs < 2000 {
+								o.pacingDelayMs += 250
 							}
 							o.mu.Unlock()
 
@@ -308,12 +339,17 @@ func (o *Operation) run(ctx context.Context) {
 							continue
 						}
 
+						// Non-floodwait error: retry up to 10 times
+						retries++
+						if retries >= 10 {
+							break
+						}
 						o.log.Error("index: getmessages failed, retrying...", zap.Error(err), zap.Int("worker", workerID))
-						time.Sleep(time.Second * 2)
+						time.Sleep(time.Second * 3)
 					}
 
 					if err != nil {
-						o.log.Error("index: skipping chunk after maximum retries", zap.Int("worker", workerID))
+						o.log.Error("index: skipping chunk after maximum retries", zap.Error(err), zap.Int("worker", workerID))
 						continue
 					}
 

@@ -24,10 +24,7 @@ func Close(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if c.Message != nil {
 			c.Message.Delete(bot, nil)
 		} else if c.InlineMessageId != "" {
-			_, _, _ = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
-				InlineMessageId: c.InlineMessageId,
-				ReplyMarkup:     gotgbot.InlineKeyboardMarkup{},
-			})
+			closeInlineMessage(bot, c.InlineMessageId)
 			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Closed! ❌"})
 		}
 		return nil
@@ -45,10 +42,7 @@ func Close(bot *gotgbot.Bot, ctx *ext.Context) error {
 			if c.Message != nil {
 				c.Message.Delete(bot, nil)
 			} else if c.InlineMessageId != "" {
-				_, _, _ = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
-					InlineMessageId: c.InlineMessageId,
-					ReplyMarkup:     gotgbot.InlineKeyboardMarkup{},
-				})
+				closeInlineMessage(bot, c.InlineMessageId)
 			}
 			return nil
 		}
@@ -63,6 +57,25 @@ func Close(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	return nil
+}
+
+func closeInlineMessage(bot *gotgbot.Bot, inlineMessageId string) {
+	text := "<b>Search result closed! ❌</b>"
+	_, _, err := bot.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+		InlineMessageId: inlineMessageId,
+		ParseMode:       gotgbot.ParseModeHTML,
+	})
+	if err != nil {
+		_, _, _ = bot.EditMessageCaption(&gotgbot.EditMessageCaptionOpts{
+			InlineMessageId: inlineMessageId,
+			Caption:         text,
+			ParseMode:       gotgbot.ParseModeHTML,
+		})
+	}
+	_, _, _ = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
+		InlineMessageId: inlineMessageId,
+		ReplyMarkup:     gotgbot.InlineKeyboardMarkup{},
+	})
 }
 
 // Ignore handles the ignore callback.

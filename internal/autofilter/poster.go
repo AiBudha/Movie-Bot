@@ -61,11 +61,29 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 	// 1. Try TMDB
 	tmdbKey := os.Getenv("TMDB_API_KEY")
 	if tmdbKey != "" {
+		queryYear := extractYear(cleanQuery)
+		titleWithoutYear := cleanQuery
+		if queryYear != "" {
+			titleWithoutYear = strings.ReplaceAll(cleanQuery, queryYear, "")
+			titleWithoutYear = strings.TrimSpace(titleWithoutYear)
+		}
+		if titleWithoutYear == "" {
+			titleWithoutYear = cleanQuery
+		}
+
 		var reqUrl string
 		if isSeries {
-			reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/tv?query=%s", url.QueryEscape(cleanQuery))
+			if queryYear != "" {
+				reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/tv?query=%s&first_air_date_year=%s", url.QueryEscape(titleWithoutYear), queryYear)
+			} else {
+				reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/tv?query=%s", url.QueryEscape(cleanQuery))
+			}
 		} else {
-			reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/movie?query=%s", url.QueryEscape(cleanQuery))
+			if queryYear != "" {
+				reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/movie?query=%s&primary_release_year=%s", url.QueryEscape(titleWithoutYear), queryYear)
+			} else {
+				reqUrl = fmt.Sprintf("https://api.themoviedb.org/3/search/movie?query=%s", url.QueryEscape(cleanQuery))
+			}
 		}
 
 		req, err := http.NewRequest("GET", reqUrl, nil)
@@ -83,6 +101,8 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 							OriginalTitle string `json:"original_title"`
 							Name          string `json:"name"`
 							OriginalName  string `json:"original_name"`
+							ReleaseDate   string `json:"release_date"`
+							FirstAirDate  string `json:"first_air_date"`
 						} `json:"results"`
 					}
 					if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
@@ -98,7 +118,11 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 							if !isASCII(title) && isASCII(originalTitle) && originalTitle != "" {
 								title = originalTitle
 							}
-							if r.PosterPath != "" && (titleMatchesQuery(title, cleanQuery) || (originalTitle != "" && titleMatchesQuery(originalTitle, cleanQuery))) {
+							apiDate := r.ReleaseDate
+							if apiDate == "" {
+								apiDate = r.FirstAirDate
+							}
+							if r.PosterPath != "" && matchYear(apiDate, cleanQuery) && (titleMatchesQuery(title, cleanQuery) || (originalTitle != "" && titleMatchesQuery(originalTitle, cleanQuery))) {
 								resultUrl = "https://image.tmdb.org/t/p/w500" + r.PosterPath
 								break
 							}
@@ -127,6 +151,8 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 								OriginalTitle string `json:"original_title"`
 								Name          string `json:"name"`
 								OriginalName  string `json:"original_name"`
+								ReleaseDate   string `json:"release_date"`
+								FirstAirDate  string `json:"first_air_date"`
 							} `json:"results"`
 						}
 						if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
@@ -143,7 +169,11 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 								if !isASCII(title) && isASCII(originalTitle) && originalTitle != "" {
 									title = originalTitle
 								}
-								if r.PosterPath == "" {
+								apiDate := r.ReleaseDate
+								if apiDate == "" {
+									apiDate = r.FirstAirDate
+								}
+								if r.PosterPath == "" || !matchYear(apiDate, cleanQuery) {
 									continue
 								}
 								if strings.EqualFold(strings.TrimSpace(title), strings.TrimSpace(cleanQuery)) || (originalTitle != "" && strings.EqualFold(strings.TrimSpace(originalTitle), strings.TrimSpace(cleanQuery))) {
@@ -171,7 +201,11 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 									if !isASCII(title) && isASCII(originalTitle) && originalTitle != "" {
 										title = originalTitle
 									}
-									if r.PosterPath == "" {
+									apiDate := r.ReleaseDate
+									if apiDate == "" {
+										apiDate = r.FirstAirDate
+									}
+									if r.PosterPath == "" || !matchYear(apiDate, cleanQuery) {
 										continue
 									}
 									if !titleMatchesQuery(title, cleanQuery) && (originalTitle == "" || !titleMatchesQuery(originalTitle, cleanQuery)) {
@@ -200,7 +234,11 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 									if !isASCII(title) && isASCII(originalTitle) && originalTitle != "" {
 										title = originalTitle
 									}
-									if r.PosterPath != "" && (titleMatchesQuery(title, cleanQuery) || (originalTitle != "" && titleMatchesQuery(originalTitle, cleanQuery))) {
+									apiDate := r.ReleaseDate
+									if apiDate == "" {
+										apiDate = r.FirstAirDate
+									}
+									if r.PosterPath != "" && matchYear(apiDate, cleanQuery) && (titleMatchesQuery(title, cleanQuery) || (originalTitle != "" && titleMatchesQuery(originalTitle, cleanQuery))) {
 										resultUrl = "https://image.tmdb.org/t/p/w500" + r.PosterPath
 										break
 									}
@@ -217,30 +255,71 @@ func GetPosterUrlWithType(query string, isSeries bool) string {
 	if resultUrl == "" {
 		omdbKey := os.Getenv("OMDB_API_KEY")
 		if omdbKey != "" {
+			queryYear := extractYear(cleanQuery)
+			titleWithoutYear := cleanQuery
+			if queryYear != "" {
+				titleWithoutYear = strings.ReplaceAll(cleanQuery, queryYear, "")
+				titleWithoutYear = strings.TrimSpace(titleWithoutYear)
+			}
+			if titleWithoutYear == "" {
+				titleWithoutYear = cleanQuery
+			}
+
 			var typeParam string
 			if isSeries {
 				typeParam = "&type=series"
 			} else {
 				typeParam = "&type=movie"
 			}
-			reqUrl := fmt.Sprintf("http://www.omdbapi.com/?apikey=%s&s=%s%s", omdbKey, url.QueryEscape(cleanQuery), typeParam)
-			resp, err := posterClient.Get(reqUrl)
+
+			// Attempt 1: Direct Title Lookup
+			var directUrl string
+			if queryYear != "" {
+				directUrl = fmt.Sprintf("http://www.omdbapi.com/?apikey=%s&t=%s&y=%s%s", omdbKey, url.QueryEscape(titleWithoutYear), queryYear, typeParam)
+			} else {
+				directUrl = fmt.Sprintf("http://www.omdbapi.com/?apikey=%s&t=%s%s", omdbKey, url.QueryEscape(cleanQuery), typeParam)
+			}
+
+			respDirect, err := posterClient.Get(directUrl)
 			if err == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode == 200 {
-					var result struct {
-						Search []struct {
-							Poster string `json:"Poster"`
-							Title  string `json:"Title"`
-						} `json:"Search"`
+				defer respDirect.Body.Close()
+				if respDirect.StatusCode == 200 {
+					var directResult struct {
+						Poster   string `json:"Poster"`
+						Title    string `json:"Title"`
+						Year     string `json:"Year"`
 						Response string `json:"Response"`
 					}
-					if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-						if result.Response == "True" {
-							for _, r := range result.Search {
-								if r.Poster != "" && r.Poster != "N/A" && titleMatchesQuery(r.Title, cleanQuery) {
-									resultUrl = r.Poster
-									break
+					if err := json.NewDecoder(respDirect.Body).Decode(&directResult); err == nil {
+						if directResult.Response == "True" && directResult.Poster != "" && directResult.Poster != "N/A" && matchYear(directResult.Year, cleanQuery) && titleMatchesQuery(directResult.Title, cleanQuery) {
+							resultUrl = directResult.Poster
+						}
+					}
+				}
+			}
+
+			// Attempt 2: Search Lookup Fallback
+			if resultUrl == "" {
+				reqUrl := fmt.Sprintf("http://www.omdbapi.com/?apikey=%s&s=%s%s", omdbKey, url.QueryEscape(cleanQuery), typeParam)
+				resp, err := posterClient.Get(reqUrl)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == 200 {
+						var result struct {
+							Search []struct {
+								Poster string `json:"Poster"`
+								Title  string `json:"Title"`
+								Year   string `json:"Year"`
+							} `json:"Search"`
+							Response string `json:"Response"`
+						}
+						if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+							if result.Response == "True" {
+								for _, r := range result.Search {
+									if r.Poster != "" && r.Poster != "N/A" && matchYear(r.Year, cleanQuery) && titleMatchesQuery(r.Title, cleanQuery) {
+										resultUrl = r.Poster
+										break
+									}
 								}
 							}
 						}
@@ -357,7 +436,7 @@ func GetSeasonPosterUrl(query string, season int) string {
 
 
 // titleMatchesQuery checks whether the API result title is a valid match for the user's search query.
-// All words from the query must appear in the title. This prevents "Faces" from matching "Faces of Death".
+// All words from the query (except 4-digit years) must appear in the title.
 func titleMatchesQuery(title, query string) bool {
 	if title == "" {
 		return false
@@ -365,8 +444,32 @@ func titleMatchesQuery(title, query string) bool {
 	titleLower := strings.ToLower(title)
 	queryLower := strings.ToLower(query)
 
-	queryWords := strings.Fields(queryLower)
-	titleWords := strings.Fields(titleLower)
+	rawQueryWords := strings.Fields(queryLower)
+	rawTitleWords := strings.Fields(titleLower)
+
+	yearRegex := regexp.MustCompile(`^(19|20)\d{2}$`)
+
+	// Filter out years from query words, unless the query contains ONLY years
+	var queryWords []string
+	for _, w := range rawQueryWords {
+		if !yearRegex.MatchString(w) {
+			queryWords = append(queryWords, w)
+		}
+	}
+	if len(queryWords) == 0 {
+		queryWords = rawQueryWords
+	}
+
+	// Filter out years from title words, unless the title contains ONLY years
+	var titleWords []string
+	for _, w := range rawTitleWords {
+		if !yearRegex.MatchString(w) {
+			titleWords = append(titleWords, w)
+		}
+	}
+	if len(titleWords) == 0 {
+		titleWords = rawTitleWords
+	}
 
 	// All query words must be present in the title
 	for _, qw := range queryWords {
@@ -550,3 +653,19 @@ func isASCII(s string) bool {
 	return true
 }
 
+func matchYear(apiDateOrYear, query string) bool {
+	queryYear := extractYear(query)
+	if queryYear == "" {
+		return true
+	}
+	apiYear := extractYear(apiDateOrYear)
+	if apiYear == "" {
+		return true
+	}
+	return apiYear == queryYear
+}
+
+func extractYear(s string) string {
+	r := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	return r.FindString(s)
+}

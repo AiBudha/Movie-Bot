@@ -8,9 +8,14 @@ import (
 
 // Settings handles the /settings command which acts as the entrypoint into the config panel.
 func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type != "private" {
+		return GroupSettings(bot, ctx)
+	}
+
 	if !_app.AuthAdmin(ctx) {
 		return nil
 	}
+
 
 	text := "<b>⚙️ Cʟɪᴄᴋ Tʜᴇ Bᴜᴛᴛᴏɴ Bᴇʟᴏᴡ Tᴏ Oᴘᴇɴ Tʜᴇ Cᴏɴғɪɢ Pᴀɴᴇʟ 👇</b>"
 	markup := gotgbot.InlineKeyboardMarkup{

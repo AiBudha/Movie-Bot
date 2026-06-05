@@ -3,6 +3,8 @@ package core
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"autofilterbot/internal/autofilter"
@@ -28,9 +30,11 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 	m := ctx.Message
 	user := m.From
 
+	args := ctx.Args()
+	_app.Log.Info("StartCommand triggered", zap.Int64("user_id", user.Id), zap.Strings("args", args))
+
 	// 1. Initial user capture with source and DC
 	var source string
-	args := ctx.Args()
 	if len(args) > 1 {
 		// Detect if it's a functional link or a referral tag
 		arg := args[1]
@@ -74,6 +78,36 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return StaticCommands(bot, ctx)
 	}
 
+	if strings.HasPrefix(args[1], "connect_") {
+		chatIDStr := strings.TrimPrefix(args[1], "connect_")
+		chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+		if err != nil {
+			_, _ = m.Reply(bot, "❌ Invalid connection link.", nil)
+			return nil
+		}
+
+		_, err = bot.GetChatMember(chatID, user.Id, nil)
+		if err != nil {
+			_, _ = m.Reply(bot, "❌ You must be a member of the group to connect to it.", nil)
+			return nil
+		}
+
+		err = _app.DB.SetUserConnection(user.Id, chatID)
+		if err != nil {
+			_, _ = m.Reply(bot, "❌ Failed to connect: DB error.", nil)
+			return nil
+		}
+
+		chat, err := bot.GetChat(chatID, nil)
+		title := chatIDStr
+		if err == nil && chat != nil {
+			title = chat.Title
+		}
+
+		_, err = m.Reply(bot, fmt.Sprintf("✅ Successfully connected to <b>%s</b>!\nNow you can search this group's files directly in my PM.", htmlEscape(title)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		return err
+	}
+
 	// Any start data is expected to be base64 encoded
 	bytes, err := base64.RawURLEncoding.DecodeString(args[1])
 	if err != nil {
@@ -115,17 +149,19 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
-		// Fetch and send poster if available
-		isSeries := autofilter.IsSeriesFile(f.FileName)
-		posterUrl := autofilter.GetPosterUrlWithType(f.FileName, isSeries)
-		if posterUrl != "" {
-			limiter.Wait()
-			_, err = bot.SendPhoto(m.Chat.Id, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
-				Caption: fmt.Sprintf("<b>🎬 Poster for: %s</b>", autofilter.CleanFileNameForDisplay(f.FileName)),
-				ParseMode: gotgbot.ParseModeHTML,
-			})
-			if err != nil {
-				_app.Log.Warn("start: send poster failed", zap.Error(err))
+		// Fetch and send poster if enabled and available
+		if _app.Config.GetPosterEnabled() {
+			isSeries := autofilter.IsSeriesFile(f.FileName)
+			posterUrl := autofilter.GetPosterUrlWithType(f.FileName, isSeries)
+			if posterUrl != "" {
+				limiter.Wait()
+				_, err = bot.SendPhoto(m.Chat.Id, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
+					Caption: fmt.Sprintf("<b>🎬 Poster for: %s</b>", autofilter.CleanFileNameForDisplay(f.FileName)),
+					ParseMode: gotgbot.ParseModeHTML,
+				})
+				if err != nil {
+					_app.Log.Warn("start: send poster failed", zap.Error(err))
+				}
 			}
 		}
 

@@ -16,6 +16,8 @@ const (
 	CollectionNameJoinRequestsLogs = "JoinRequestsLogs"
 	CollectionNameBroadcasts   = "Broadcasts"
 	CollectionNameIndexedChannels = "IndexedChannels"
+	CollectionNameOTTSubscribers  = "subscribers"
+	CollectionNameOTTSentItems    = "sent_items"
 
 	DefaultDatabaseName = "AutoFilterBot"
 )
@@ -42,6 +44,8 @@ type Database interface {
 	DeleteUserJoinRequest(userId, chatId int64) error
 	// GetUsers returns a cursor to loop through all saved users.
 	GetAllUsers() (Cursor, error)
+	// GetAllUserIDs returns a slice of all user IDs.
+	GetAllUserIDs() ([]int64, error)
 
 	// IncrementUserLangStat increments the search count for a language for a specific user.
 	IncrementUserLangStat(userId int64, lang string) error
@@ -70,9 +74,20 @@ type Database interface {
 	DeleteFile(fileId string) error
 	// SearchFiles searches for files in the database by their name. The query should be sanitized first.
 	SearchFiles(query string) (Cursor, error)
+	// GetRecent2026Files retrieves the most recent 2026 uploaded files.
+	GetRecent2026Files(limit int) ([]*model.File, error)
 
 	// SaveGroup inserts a group id into the database to keep track of them.
 	SaveGroup(id int64) error
+	GetGroupConfig(chatID int64) (*model.GroupConfig, error)
+	SaveGroupConfig(cfg *model.GroupConfig) error
+	GetUserWarning(chatID, userID int64) (int, error)
+	AddUserWarning(chatID, userID int64) (int, error)
+	ResetUserWarnings(chatID, userID int64) error
+	IncrementGroupMsgCount(chatID int64) error
+	IncrementGroupSearchCount(chatID int64) error
+	SetUserConnection(userId int64, chatID int64) error
+	GetUserConnection(userId int64) (int64, error)
 
 	// GetConfig fetches the bot configs from the database.
 	GetConfig(botId int64) (*config.Config, error)
@@ -114,6 +129,16 @@ type Database interface {
 	UpdateBroadcast(id string, updates map[string]interface{}) error
 	GetAllBroadcasts() ([]model.Broadcast, error)
 	DeleteBroadcast(id string) error
+
+	// OTT
+	AddOTTSubscriber(chatID int64, username string) (bool, error)
+	RemoveOTTSubscriber(chatID int64) (bool, error)
+	GetOTTSubscribers() ([]int64, error)
+	SetOTTAutoSend(chatID int64, enabled bool) error
+	GetOTTAutoSendSubscribers() ([]int64, error)
+	IsOTTSubscriber(chatID int64) (bool, error)
+	IsOTTItemSent(itemID string) (bool, error)
+	MarkOTTItemSent(itemID string, title string) error
 }
 
 // KeyValuePair represents a single key-value pair in a document.

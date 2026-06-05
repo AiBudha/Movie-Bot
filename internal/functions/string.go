@@ -12,6 +12,9 @@ var nonAlphaNumericRegex = regexp.MustCompile(`[^\w\s]+`)
 var promoPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:\[\s*@\w+\s*\]|\(\s*@\w+\s*\)|@\w+)`),
 	regexp.MustCompile(`(?i)t\.me/\w+`),
+	regexp.MustCompile(`^\s*\[\s*[A-Za-z]{2,3}\s*\][\s._-]*`),
+	regexp.MustCompile(`^\s*@\w+(?:\s+[Xx])?\b[\s._-]*`),
+	regexp.MustCompile(`^\s*(?i)(?:\[\s*(?:mm|cc|mlm|dramaost)\s*\]|\(\s*(?:mm|cc|mlm|dramaost)\s*\)|(?:mm|cc|mlm|dramaost))\b[\s._-]*`),
 	regexp.MustCompile(`(?i)\bDramaOST\b`),
 }
 
@@ -20,7 +23,7 @@ func CleanPromoFromName(name string) string {
 	for _, pattern := range promoPatterns {
 		name = pattern.ReplaceAllString(name, " ")
 	}
-	return name
+	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }
 
 // RemoveSymbols returns a copy of the string will all non alpha-numeric characters removed.

@@ -121,9 +121,7 @@ func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if isPrivate {
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_%d", r.UniqueId, pageIndex), Style: "primary"}})
 	}
-
-	// Footer Action Row 1
-	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
 	if _app.Config.NewMoviesUrl != "" {
 		newMoviesBtn.Url = _app.Config.NewMoviesUrl
 		newMoviesBtn.CallbackData = ""

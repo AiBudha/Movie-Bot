@@ -36,6 +36,12 @@ type Client struct {
 	broadcastCollection *mongo.Collection
 	// Collection of channel indexing state (last message index).
 	indexedChannelsCollection *mongo.Collection
+	// warningCollection contains data about user warnings in group chats.
+	warningCollection *mongo.Collection
+	// ottSubscriberCollection stores OTT release subscribers.
+	ottSubscriberCollection *mongo.Collection
+	// ottSentItemsCollection stores OTT release items already sent.
+	ottSentItemsCollection *mongo.Collection
 
 	botId  int64
 	ctx    context.Context
@@ -130,7 +136,29 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 		joinRequestsLogsCollection: dataBase.Collection(database.CollectionNameJoinRequestsLogs),
 		broadcastCollection:        dataBase.Collection(database.CollectionNameBroadcasts),
 		indexedChannelsCollection:  dataBase.Collection(database.CollectionNameIndexedChannels),
+		warningCollection:          dataBase.Collection("Warnings"),
+		ottSubscriberCollection:    dataBase.Collection(database.CollectionNameOTTSubscribers),
+		ottSentItemsCollection:    dataBase.Collection(database.CollectionNameOTTSentItems),
 	}
+
+	// Create unique index for subscribers chat_id
+	_, _ = client.ottSubscriberCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "chat_id", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+
+	// Create unique index for sent items item_id
+	_, _ = client.ottSentItemsCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "item_id", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+
+	// Create TTL index for sent items sent_at (30 days = 2592000 seconds)
+	var ttlSecs int32 = 30 * 24 * 60 * 60
+	_, _ = client.ottSentItemsCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "sent_at", Value: 1}},
+		Options: options.Index().SetExpireAfterSeconds(ttlSecs),
+	})
 
 	return client, nil
 }

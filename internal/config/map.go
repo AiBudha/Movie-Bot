@@ -18,6 +18,7 @@ const (
 	FieldNameButtonTemplate    = "btn_template"
 	FieldNameFdetailsTemplate  = "fdetails_template"
 	FieldNameSizeButton        = "size_btn"
+	FieldNamePosterEnabled     = "poster_enabled"
 	FieldNameAutodeleteTime    = "autodel_time"
 	FieldNameFsubText          = "fsub_text"
 	FieldNameFileCaption       = "file_caption"
@@ -35,7 +36,11 @@ const (
 	FieldNameResultsChannel    = "results_channel"
 	FieldNameResultsChannelID  = "results_channel_id"
 	FieldNameFileChannels      = "file_channels"
+	FieldNameDefaultWelcomeText    = "def_welcome_text"
+	FieldNameDefaultWelcomeEnabled = "def_welcome_enabled"
+	FieldNameDefaultLocks          = "def_locks"
 )
+
 
 // ToMap converts the contents of the struct into map so fields can be dynamically accessed.
 func (c *Config) ToMap() map[string]any {
@@ -69,6 +74,7 @@ func (c *Config) toMap() map[string]any {
 	vals[FieldNameButtonTemplate] = c.GetButtonTemplate()
 	vals[FieldNameFdetailsTemplate] = c.GetFileDetailsTemplate()
 	vals[FieldNameSizeButton] = c.GetSizeButton()
+	vals[FieldNamePosterEnabled] = c.GetPosterEnabled()
 	vals[FieldNameAutodeleteTime] = c.GetAutodeleteTime()
 
 	vals[FieldNameFsubText] = c.GetFsubText()
@@ -91,8 +97,12 @@ func (c *Config) toMap() map[string]any {
 	vals[FieldNameResultsChannel] = c.ResultsChannel
 	vals[FieldNameResultsChannelID] = c.ResultsChannelID
 	vals[FieldNameFileChannels] = c.FileChannels
+	vals[FieldNameDefaultWelcomeText] = c.GetDefaultWelcomeText()
+	vals[FieldNameDefaultWelcomeEnabled] = c.GetDefaultWelcomeEnabled()
+	vals[FieldNameDefaultLocks] = c.GetDefaultLocks()
 
 	return vals
+
 }
 
 // RefreshMap refreshes the value of the cached map.

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,16 +100,12 @@ func Broadcast(bot *gotgbot.Bot, ctx *ext.Context) error {
 	opts.Keyboard = append(opts.Keyboard, button.UnwrapKeyboard(keyboard)...)
 
 	// Fetch user count for confirmation message info
-	usersCursor, err := _app.DB.GetAllUsers()
+	userIds, err := _app.DB.GetAllUserIDs()
 	if err != nil {
 		m.Reply(bot, "Fetch Users From Database Failed :/", nil)
 		return nil
 	}
-	var totalUsers int
-	for usersCursor.Next(context.Background()) {
-		totalUsers++
-	}
-	usersCursor.Close(context.Background())
+	totalUsers := len(userIds)
 
 	// Create pending broadcast in DB
 	bId := fmt.Sprintf("bc_%d", time.Now().UnixNano())
@@ -182,7 +177,12 @@ func HandleConfirmBroadcast(bot *gotgbot.Bot, ctx *ext.Context, bId string) erro
 	}
 
 	// Edit confirmation message to "Starting broadcast..."
-	_, _, err = c.Message.EditText(bot, "<b>Sᴛᴀʀᴛɪɴɢ Bʀᴏᴀᴅᴄᴀsᴛ... 🚀</b>\n<i>Please wait...</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+	_, _, err = c.Message.EditText(bot, "<b>Sᴛᴀʀᴛɪɴɢ Bʀᴏᴀᴅᴄᴀsᴛ... 🚀</b>\n<i>Please wait...</i>", &gotgbot.EditMessageTextOpts{
+		ParseMode: gotgbot.ParseModeHTML,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "❌ Cancel Broadcast", CallbackData: "admin:bc_cancel:" + bId}}},
+		},
+	})
 	if err != nil {
 		_app.Log.Warn("broadcast: edit status to starting failed", zap.Error(err))
 	}
@@ -206,14 +206,19 @@ func HandleCancelBroadcast(bot *gotgbot.Bot, ctx *ext.Context, bId string) error
 	if err == nil && b != nil {
 		if b.Status == "pending" {
 			_app.DB.DeleteBroadcast(bId)
+			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Cancelled ❌"})
+			_, err = c.Message.Delete(bot, nil)
+			return err
 		} else if b.Status == "sending" {
 			_app.DB.UpdateBroadcast(bId, map[string]interface{}{"status": "cancelled"})
+			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Cancelling Broadcast... ⏳"})
+			_, _, err = c.Message.EditText(bot, "<b>Cancelling Broadcast... ⏳</b>\n<i>Please wait for the current send loop to finish...</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+			return err
 		}
 	}
 
-	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Cancelled ❌"})
-	_, err = c.Message.Delete(bot, nil)
-	return err
+	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Not Found ❌"})
+	return nil
 }
 
 // RunBroadcast executes the broadcast in the background and reports progress.
@@ -224,23 +229,14 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 		return
 	}
 
-	usersCursor, err := _app.DB.GetAllUsers()
+	userIds, err := _app.DB.GetAllUserIDs()
 	if err != nil {
-		_app.Log.Error("RunBroadcast: failed to get all users", zap.Error(err))
+		_app.Log.Error("RunBroadcast: failed to get all user IDs", zap.Error(err))
 		return
 	}
 
-	var userSlice []model.User
-	for usersCursor.Next(context.Background()) {
-		var u model.User
-		if err := usersCursor.Decode(&u); err == nil {
-			userSlice = append(userSlice, u)
-		}
-	}
-	usersCursor.Close(context.Background())
-
 	p := newBroadcastProgress()
-	p.total = len(userSlice)
+	p.total = len(userIds)
 
 	method := MethodFromString(b.Method)
 	opts := &send.SendOpts{
@@ -251,7 +247,7 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 
 	var sentMsgs []model.BroadcastMessage
 
-	for _, u := range userSlice {
+	for _, uId := range userIds {
 		if _app.Ctx.Err() != nil {
 			bot.EditMessageText(
 				p.BuildMessage().WriteLn("<code>Broadcast Cancelled Due to Application Stopping</code>").String(),
@@ -266,12 +262,19 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 
 		// Double-check if the broadcast was cancelled by admin dynamically
 		if currB, err := _app.DB.GetBroadcast(bId); err == nil && currB.Status == "cancelled" {
+			var kb [][]gotgbot.InlineKeyboardButton
+			if p.success > 0 {
+				kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + bId}})
+			}
+			kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}})
+
 			bot.EditMessageText(
 				p.BuildMessage().WriteLn("<code>Broadcast Cancelled By Admin ❌</code>").String(),
 				&gotgbot.EditMessageTextOpts{
-					ChatId:    adminChatId,
-					MessageId: progressMessageId,
-					ParseMode: gotgbot.ParseModeHTML,
+					ChatId:      adminChatId,
+					MessageId:   progressMessageId,
+					ParseMode:   gotgbot.ParseModeHTML,
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 				},
 			)
 			return
@@ -292,14 +295,14 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 			// Dynamic organic jitter (0-50ms) to bypass robotic pattern matching
 			time.Sleep(time.Millisecond * time.Duration(time.Now().UnixNano()%50))
 
-			sentM, lastErr = method(bot, u.UserId, &userOpts)
+			sentM, lastErr = method(bot, uId, &userOpts)
 			if lastErr == nil {
 				success = true
 				break
 			}
 
 			if floodErr, ok := functions.AsFloodWait(lastErr); ok {
-				_app.Log.Info("broadcast: flood wait detected, sleeping", zap.Int64("duration_seconds", floodErr.Duration), zap.Int64("user_id", u.UserId))
+				_app.Log.Info("broadcast: flood wait detected, sleeping", zap.Int64("duration_seconds", floodErr.Duration), zap.Int64("user_id", uId))
 				floodErr.Wait()
 				attempt--
 				continue
@@ -317,23 +320,23 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 			errStr := lastErr.Error()
 			switch {
 			case strings.Contains(errStr, "blocked"):
-				_app.DB.DeleteUser(u.UserId)
+				_app.DB.DeleteUser(uId)
 				p.blocked++
 			case strings.Contains(errStr, "deactivated") || strings.Contains(errStr, "deleted"):
-				_app.DB.DeleteUser(u.UserId)
+				_app.DB.DeleteUser(uId)
 				p.deleted++
 			case strings.Contains(errStr, "chat not found"):
-				_app.DB.DeleteUser(u.UserId)
+				_app.DB.DeleteUser(uId)
 				p.blocked++
 			default:
 				p.otherErr++
-				_app.Log.Info("broadcast: failed to send", zap.Int64("chat_id", u.UserId), zap.Error(lastErr))
+				_app.Log.Info("broadcast: failed to send", zap.Int64("chat_id", uId), zap.Error(lastErr))
 			}
 		} else {
 			p.success++
 			if sentM != nil {
 				sentMsgs = append(sentMsgs, model.BroadcastMessage{
-					UserId:    u.UserId,
+					UserId:    uId,
 					MessageId: sentM.MessageId,
 				})
 			}
@@ -347,6 +350,9 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 					ChatId:    adminChatId,
 					MessageId: progressMessageId,
 					ParseMode: gotgbot.ParseModeHTML,
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "❌ Cancel Broadcast", CallbackData: "admin:bc_cancel:" + bId}}},
+					},
 				},
 			)
 			// Save progressive stats to database
@@ -372,13 +378,19 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 		"sent_messages": sentMsgs,
 	})
 
+	var kb [][]gotgbot.InlineKeyboardButton
+	if p.success > 0 {
+		kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + bId}})
+	}
+	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}})
+
 	bot.EditMessageText(
 		p.BuildMessage().WriteLn("<code>Broadcast Completed Successfully ✅</code>").String(),
 		&gotgbot.EditMessageTextOpts{
 			ChatId:      adminChatId,
 			MessageId:   progressMessageId,
 			ParseMode:   gotgbot.ParseModeHTML,
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}}}},
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		},
 	)
 }
@@ -665,7 +677,11 @@ func ViewBroadcastDetails(bot *gotgbot.Bot, ctx *ext.Context, bId string) error 
 	var keyboard [][]gotgbot.InlineKeyboardButton
 
 	// Add action buttons based on status
-	if b.Status == "completed" && len(b.SentMessages) > 0 {
+	if b.Status == "sending" {
+		keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{
+			{Text: "❌ Cancel Broadcast", CallbackData: "admin:bc_cancel:" + b.ID},
+		})
+	} else if (b.Status == "completed" || b.Status == "cancelled") && len(b.SentMessages) > 0 {
 		keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{
 			{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + b.ID},
 		})
