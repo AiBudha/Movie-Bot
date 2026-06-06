@@ -18,6 +18,8 @@ func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	isCallback := ctx.CallbackQuery != nil
+
 	// Mock or set the CallbackQuery data to "config" to get the root panel page
 	if ctx.CallbackQuery == nil {
 		ctx.CallbackQuery = &gotgbot.CallbackQuery{
@@ -28,6 +30,12 @@ func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	content, markup, err := panel.ProcessUpdate(_app.ConfigPanel, ctx, bot)
+	
+	// Restore CallbackQuery to original state to avoid side effects
+	if !isCallback {
+		ctx.CallbackQuery = nil
+	}
+
 	if err != nil {
 		_app.Log.Error("failed to process config panel update", zap.Error(err))
 		return err
@@ -49,7 +57,7 @@ func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	var sendErr error
-	if ctx.CallbackQuery != nil {
+	if isCallback {
 		_, _, sendErr = ctx.CallbackQuery.Message.EditText(bot, content, &gotgbot.EditMessageTextOpts{
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: markup},
 			ParseMode:   gotgbot.ParseModeHTML,
