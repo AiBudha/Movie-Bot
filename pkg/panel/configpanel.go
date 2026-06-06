@@ -72,6 +72,16 @@ func (p *Panel) HandleUpdate(ctx *ext.Context, bot *gotgbot.Bot) error {
 		markup = [][]gotgbot.InlineKeyboardButton{{button.Close()}}
 	}
 
+	if len(markup) > 0 {
+		lastRowIdx := len(markup) - 1
+		if len(markup[lastRowIdx]) == 1 && (markup[lastRowIdx][0].CallbackData == "close" || markup[lastRowIdx][0].Text == "🗑️ Close") {
+			markup[lastRowIdx] = []gotgbot.InlineKeyboardButton{
+				{Text: "🔙 Back", CallbackData: "admin:back"},
+				{Text: "Close ❌", CallbackData: "admin:close"},
+			}
+		}
+	}
+
 	_, _, err = update.Message.EditText(bot, content, &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: markup},
 		ParseMode:   gotgbot.ParseModeHTML,

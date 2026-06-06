@@ -1,6 +1,8 @@
 package core
 
 import (
+	"autofilterbot/internal/button"
+	"autofilterbot/pkg/panel"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"go.uber.org/zap"
@@ -16,35 +18,56 @@ func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-
-	text := "<b>⚙️ Cʟɪᴄᴋ Tʜᴇ Bᴜᴛᴛᴏɴ Bᴇʟᴏᴡ Tᴏ Oᴘᴇɴ Tʜᴇ Cᴏɴғɪɢ Pᴀɴᴇʟ 👇</b>"
-	markup := gotgbot.InlineKeyboardMarkup{
-		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{{Text: "𝖮𝖯𝖤𝖭", CallbackData: "config"}},
-			{{Text: "🔙 Back", CallbackData: "admin:back"}},
-		},
+	// Mock or set the CallbackQuery data to "config" to get the root panel page
+	if ctx.CallbackQuery == nil {
+		ctx.CallbackQuery = &gotgbot.CallbackQuery{
+			Data: "config",
+		}
+	} else {
+		ctx.CallbackQuery.Data = "config"
 	}
 
-	var err error
+	content, markup, err := panel.ProcessUpdate(_app.ConfigPanel, ctx, bot)
+	if err != nil {
+		_app.Log.Error("failed to process config panel update", zap.Error(err))
+		return err
+	}
+
+	if len(markup) == 0 {
+		markup = [][]gotgbot.InlineKeyboardButton{{button.Close()}}
+	}
+
+	// Customize root page back row with Back to Admin and Close buttons
+	if len(markup) > 0 {
+		lastRowIdx := len(markup) - 1
+		if len(markup[lastRowIdx]) == 1 && (markup[lastRowIdx][0].CallbackData == "close" || markup[lastRowIdx][0].Text == "🗑️ Close") {
+			markup[lastRowIdx] = []gotgbot.InlineKeyboardButton{
+				{Text: "🔙 Back", CallbackData: "admin:back"},
+				{Text: "Close ❌", CallbackData: "admin:close"},
+			}
+		}
+	}
+
+	var sendErr error
 	if ctx.CallbackQuery != nil {
-		_, _, err = ctx.CallbackQuery.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
-			ReplyMarkup: markup,
+		_, _, sendErr = ctx.CallbackQuery.Message.EditText(bot, content, &gotgbot.EditMessageTextOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: markup},
 			ParseMode:   gotgbot.ParseModeHTML,
 		})
 	} else if ctx.Message != nil {
-		_, err = ctx.Message.Reply(bot, text, &gotgbot.SendMessageOpts{
-			ReplyMarkup: markup,
+		_, sendErr = ctx.Message.Reply(bot, content, &gotgbot.SendMessageOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: markup},
 			ParseMode:   gotgbot.ParseModeHTML,
 		})
 	} else {
-		_, err = bot.SendMessage(ctx.EffectiveChat.Id, text, &gotgbot.SendMessageOpts{
-			ReplyMarkup: markup,
+		_, sendErr = bot.SendMessage(ctx.EffectiveChat.Id, content, &gotgbot.SendMessageOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: markup},
 			ParseMode:   gotgbot.ParseModeHTML,
 		})
 	}
 
-	if err != nil {
-		_app.Log.Warn("send/edit settings msg failed", zap.Error(err))
+	if sendErr != nil {
+		_app.Log.Warn("send/edit settings msg failed", zap.Error(sendErr))
 	}
 
 	return nil
