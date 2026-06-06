@@ -244,7 +244,7 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 		boldTitle := toBoldSansSerif(title)
 
 		parts := []string{
-			fmt.Sprintf("📺 [%s] ➤", boldSize),
+			fmt.Sprintf("[%s] ➤", boldSize),
 		}
 		if seriesParts != "" {
 			parts = append(parts, fmt.Sprintf("[%s]", toBoldSansSerif(seriesParts)))
@@ -269,7 +269,7 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 			titlePart = fmt.Sprintf("%s (%s)", titlePart, year)
 		}
 
-		btnText = fmt.Sprintf("🎬 [%s] ➤ %s", boldSize, titlePart)
+		btnText = fmt.Sprintf("[%s] ➤ %s", boldSize, titlePart)
 		if infoStr != "" {
 			btnText = fmt.Sprintf("%s  %s", btnText, toBoldSansSerif(infoStr))
 		}
