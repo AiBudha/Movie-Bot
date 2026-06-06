@@ -233,8 +233,21 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 			pm.Delete(bot, nil)
 		}
 	case DataPrefixSearch:
-		_, err := _autofilter(bot, ctx)
-		return err
+		msg, err := _autofilter(bot, ctx)
+		if err != nil {
+			return err
+		}
+
+		delTime := _app.Config.GetAutodeleteTime()
+		if delTime != 0 {
+			if msg != nil {
+				_ = _app.AutoDelete.SaveMessage(msg, time.Minute*time.Duration(delTime))
+			}
+			if ctx.Message != nil {
+				_ = _app.AutoDelete.SaveMessage(ctx.Message, time.Minute*time.Duration(delTime))
+			}
+		}
+		return nil
 	default:
 		// Unknown prefix, treat as referral start
 		return StaticCommands(bot, ctx)
