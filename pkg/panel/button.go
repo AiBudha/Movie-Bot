@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"autofilterbot/internal/button"
 	"autofilterbot/pkg/callbackdata"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -11,11 +10,15 @@ func buttonsFromPages(callbackData *callbackdata.CallbackData, pages []*Page) []
 	var backRow []gotgbot.InlineKeyboardButton
 
 	if len(callbackData.Path) <= 1 {
-		// root page so add close button
-		backRow = []gotgbot.InlineKeyboardButton{button.Close()}
+		// root page so add back button to admin panel
+		backRow = []gotgbot.InlineKeyboardButton{backButton("admin:back")}
 	} else {
+		backPath := callbackData.RemoveLastPath().ToString()
+		if backPath == "config" || backPath == "config:home" {
+			backPath = "admin:back"
+		}
 		// nested page so add back button
-		backRow = []gotgbot.InlineKeyboardButton{backButton(callbackData.RemoveLastPath().ToString())}
+		backRow = []gotgbot.InlineKeyboardButton{backButton(backPath)}
 	}
 
 	if len(pages) == 0 {
