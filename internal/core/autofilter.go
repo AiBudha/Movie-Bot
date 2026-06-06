@@ -657,7 +657,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	buttons = append(buttons, fileButtons...)
 
 	// Multi-select
-	if isPrivate {
+	if isPrivate && len(allFiles) > 1 {
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_0", uniqueId), Style: "primary"}})
 	}
 
@@ -676,7 +676,9 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
 
 	// Navigation
-	buttons = append(buttons, footerRow(uniqueId, 0, len(files)))
+	if len(files) > 1 {
+		buttons = append(buttons, footerRow(uniqueId, 0, len(files)))
+	}
 
 	// Footer Action Row 2
 	buttons = append(buttons, []gotgbot.InlineKeyboardButton{

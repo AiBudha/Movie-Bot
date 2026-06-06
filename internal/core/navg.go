@@ -118,7 +118,7 @@ func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	buttons = append(buttons, fileButtons...)
 
 	// Multi-select
-	if isPrivate {
+	if isPrivate && len(allFiles) > 1 {
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_%d", r.UniqueId, pageIndex), Style: "primary"}})
 	}
 	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
@@ -134,7 +134,9 @@ func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
 
 	// Navigation
-	buttons = append(buttons, footerRow(r.UniqueId, pageIndex, len(files)))
+	if len(files) > 1 {
+		buttons = append(buttons, footerRow(r.UniqueId, pageIndex, len(files)))
+	}
 
 	// Footer Action Row 2
 	query := r.Query
