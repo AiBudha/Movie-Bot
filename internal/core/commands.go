@@ -104,6 +104,11 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 		msg = _app.Config.GetCopyrightMessage()
 	case "uinfo":
 		userId := ctx.EffectiveUser.Id
+		// Dynamically fetch user profile DC
+		dc := functions.SetUserDC(bot, userId)
+		if dc > 0 {
+			_ = _app.DB.SaveUserExtended(userId, "uinfo_refresh", dc, ctx.EffectiveUser.LanguageCode)
+		}
 		user, err := _app.DB.GetUser(userId)
 		if err != nil {
 			_app.Log.Error("uinfo database error", zap.Error(err))
@@ -130,6 +135,11 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 				langStats.WriteString(" None")
 			}
 
+			dcStr := "Unknown (No profile photo)"
+			if user.DC > 0 {
+				dcStr = fmt.Sprintf("%d", user.DC)
+			}
+
 			text := fmt.Sprintf(`<b>👤 YOUR STORED INFORMATION</b>
 
 • <b>User ID:</b> <code>%d</code>
@@ -137,7 +147,7 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 • <b>Last Name:</b> %s
 • <b>Username:</b> %s
 • <b>Referral Source:</b> <code>%s</code>
-• <b>Telegram Data Center (DC):</b> <code>%d</code>
+• <b>Telegram Data Center (DC):</b> <code>%s</code>
 • <b>Language Code:</b> <code>%s</code>
 • <b>Country Code:</b> <code>%s</code>
 • <b>Created At:</b> <code>%s</code>
@@ -148,7 +158,7 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 				htmlEscape(ctx.EffectiveUser.LastName),
 				htmlEscape(ctx.EffectiveUser.Username),
 				htmlEscape(user.Source),
-				user.DC,
+				dcStr,
 				htmlEscape(user.Language),
 				htmlEscape(user.Country),
 				createdAtStr,

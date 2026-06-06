@@ -21,17 +21,23 @@ func (c *Client) SaveUser(userId int64) error {
 // SaveUserExtended saves a user with additional metadata like source and DC.
 func (c *Client) SaveUserExtended(userId int64, source string, dc int, lang string) error {
 	filter := idFilter(userId)
-	update := bson.M{
-		"$setOnInsert": bson.M{
-			"_id":        userId,
-			"source":     source,
-			"dc":         dc,
-			"lang":       lang,
-			"created_at": time.Now().Unix(),
-		},
+	setOnInsert := bson.M{
+		"_id":        userId,
+		"source":     source,
+		"lang":       lang,
+		"created_at": time.Now().Unix(),
 	}
-	// If country is provided via lang mapping later, it can be updated.
-	// For now, we set it on insert if possible.
+	if dc > 0 {
+		setOnInsert["dc"] = dc
+	}
+	update := bson.M{
+		"$setOnInsert": setOnInsert,
+	}
+	if dc > 0 {
+		update["$set"] = bson.M{
+			"dc": dc,
+		}
+	}
 	opts := options.Update().SetUpsert(true)
 	_, err := c.userCollection.UpdateOne(c.ctx, filter, update, opts)
 	return err
