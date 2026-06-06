@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"autofilterbot/internal/model"
 
@@ -32,6 +33,96 @@ func getCommandArgs(ctx *ext.Context) []string {
 		return args[1:]
 	}
 	return []string{}
+}
+
+// Safely extracts a substring from a string using UTF-16 surrogate-pair aware offset ranges (as returned by Telegram Bot API)
+func getEntityText(text string, offset, length int) string {
+	utf16Text := utf16.Encode([]rune(text))
+	if offset < 0 || offset >= len(utf16Text) {
+		return ""
+	}
+	end := offset + length
+	if end > len(utf16Text) {
+		end = len(utf16Text)
+	}
+	return string(utf16.Decode(utf16Text[offset:end]))
+}
+
+// checkPromotionalLink detects Telegram channel/group/invite links while whitelisting the bot's own username.
+func checkPromotionalLink(urlStr string, botUsername string) bool {
+	urlStr = strings.ToLower(strings.TrimSpace(urlStr))
+
+	if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
+		urlStr = "https://" + urlStr
+	}
+
+	if strings.Contains(urlStr, "t.me/") ||
+		strings.Contains(urlStr, "telegram.me/") ||
+		strings.Contains(urlStr, "telegram.dog/") ||
+		strings.Contains(urlStr, "tg.me/") {
+
+		// Whitelist the bot's own username link
+		if botUsername != "" && (strings.Contains(urlStr, "t.me/"+strings.ToLower(botUsername)) ||
+			strings.Contains(urlStr, "telegram.me/"+strings.ToLower(botUsername))) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// warnUserLocal increments user warnings in DB, alerts the group chat, and applies penalties if the threshold is met.
+func warnUserLocal(bot *gotgbot.Bot, chatID int64, user *gotgbot.User, reason string) error {
+	warnCount, err := _app.DB.AddUserWarning(chatID, user.Id)
+	if err != nil {
+		_app.Log.Error("failed to record user warning", zap.Error(err))
+		return err
+	}
+
+	cfg, _ := _app.DB.GetGroupConfig(chatID)
+	limit := 3
+	mode := "ban"
+	if cfg != nil {
+		if cfg.WarnLimit > 0 {
+			limit = cfg.WarnLimit
+		}
+		if cfg.WarnMode != "" {
+			mode = cfg.WarnMode
+		}
+	}
+
+	if warnCount >= limit {
+		_ = _app.DB.ResetUserWarnings(chatID, user.Id)
+		if mode == "kick" {
+			_, _ = bot.BanChatMember(chatID, user.Id, nil)
+			_, _ = bot.UnbanChatMember(chatID, user.Id, &gotgbot.UnbanChatMemberOpts{OnlyIfBanned: true})
+			_, _ = bot.SendMessage(chatID, fmt.Sprintf("🚨 <b>%s</b> reached the warning limit (%d/%d) and has been kicked!\n<b>Reason:</b> %s", htmlEscape(user.FirstName), warnCount, limit, htmlEscape(reason)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		} else if mode == "mute" {
+			permissions := gotgbot.ChatPermissions{
+				CanSendMessages:       false,
+				CanSendAudios:         false,
+				CanSendDocuments:      false,
+				CanSendPhotos:         false,
+				CanSendVideos:         false,
+				CanSendVideoNotes:     false,
+				CanSendVoiceNotes:     false,
+				CanSendPolls:          false,
+				CanSendOtherMessages:  false,
+				CanAddWebPagePreviews: false,
+			}
+			_, _ = bot.RestrictChatMember(chatID, user.Id, permissions, nil)
+			_, _ = bot.SendMessage(chatID, fmt.Sprintf("🚨 <b>%s</b> reached the warning limit (%d/%d) and has been muted!\n<b>Reason:</b> %s", htmlEscape(user.FirstName), warnCount, limit, htmlEscape(reason)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		} else { // default "ban"
+			_, _ = bot.BanChatMember(chatID, user.Id, nil)
+			_, _ = bot.SendMessage(chatID, fmt.Sprintf("🚨 <b>%s</b> reached the warning limit (%d/%d) and has been banned!\n<b>Reason:</b> %s", htmlEscape(user.FirstName), warnCount, limit, htmlEscape(reason)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		}
+		return nil
+	}
+
+	_, err = bot.SendMessage(chatID, fmt.Sprintf("⚠️ <b>%s</b> has been warned (%d/%d)!\n\n<b>Reason:</b> %s", htmlEscape(user.FirstName), warnCount, limit, htmlEscape(reason)), &gotgbot.SendMessageOpts{
+		ParseMode: gotgbot.ParseModeHTML,
+	})
+	return err
 }
 
 func getCustomTitle(member gotgbot.ChatMember) string {
@@ -763,7 +854,7 @@ func HandleGroupLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	// Admin check: admins are exempt from locks
+	// Admin check: admins are exempt from locks and promotions checking
 	isAdmin, err := IsUserAdmin(bot, m.Chat.Id, m.From.Id)
 	if err == nil && isAdmin {
 		return nil
@@ -771,47 +862,105 @@ func HandleGroupLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	deleteMessage := false
 	reason := ""
+	shouldWarn := false
+	warningReason := "Promotion links not allowed here!"
 
-	if locks["stickers"] && m.Sticker != nil {
-		deleteMessage = true
-		reason = "stickers"
+	// Extract all links
+	var urlsToCheck []string
+	for _, entity := range m.Entities {
+		if entity.Type == "text_link" {
+			urlsToCheck = append(urlsToCheck, entity.Url)
+		} else if entity.Type == "url" {
+			urlsToCheck = append(urlsToCheck, getEntityText(m.Text, int(entity.Offset), int(entity.Length)))
+		}
 	}
-	if locks["gifs"] && m.Animation != nil {
-		deleteMessage = true
-		reason = "gifs"
+	for _, entity := range m.CaptionEntities {
+		if entity.Type == "text_link" {
+			urlsToCheck = append(urlsToCheck, entity.Url)
+		} else if entity.Type == "url" {
+			urlsToCheck = append(urlsToCheck, getEntityText(m.Caption, int(entity.Offset), int(entity.Length)))
+		}
 	}
-	if locks["media"] && (m.Photo != nil || m.Video != nil || m.Audio != nil || m.Document != nil || m.Voice != nil || m.VideoNote != nil) {
-		deleteMessage = true
-		reason = "media"
+
+	// Check raw text for t.me, telegram.me, telegram.dog, tg.me link fallbacks
+	hasRawPromo := false
+	lowerText := strings.ToLower(m.Text + " " + m.Caption)
+	if strings.Contains(lowerText, "t.me/") ||
+		strings.Contains(lowerText, "telegram.me/") ||
+		strings.Contains(lowerText, "telegram.dog/") ||
+		strings.Contains(lowerText, "tg.me/") {
+
+		words := strings.Fields(lowerText)
+		for _, w := range words {
+			if strings.Contains(w, "t.me/") || strings.Contains(w, "telegram.me/") || strings.Contains(w, "telegram.dog/") || strings.Contains(w, "tg.me/") {
+				if bot.Username != "" && (strings.Contains(w, "t.me/"+strings.ToLower(bot.Username)) || strings.Contains(w, "telegram.me/"+strings.ToLower(bot.Username))) {
+					continue
+				}
+				hasRawPromo = true
+				break
+			}
+		}
 	}
-	if locks["forwards"] && m.ForwardOrigin != nil {
+
+	// 1. Check for promotional links (always deleted & warned)
+	isPromoLink := hasRawPromo
+	for _, urlStr := range urlsToCheck {
+		if checkPromotionalLink(urlStr, bot.Username) {
+			isPromoLink = true
+			break
+		}
+	}
+
+	if isPromoLink {
+		deleteMessage = true
+		reason = "promotional links"
+		shouldWarn = true
+		warningReason = "Promotion links not allowed here!"
+	}
+
+	// 2. Check for forwarded posts (always deleted & warned)
+	if !deleteMessage && m.ForwardOrigin != nil {
 		deleteMessage = true
 		reason = "forwards"
+		shouldWarn = true
+		warningReason = "Promotion links not allowed here!"
 	}
-	if locks["links"] {
-		hasLink := false
-		for _, entity := range m.Entities {
-			if entity.Type == "url" || entity.Type == "text_link" {
-				hasLink = true
-				break
-			}
+
+	// 3. Fallbacks for lock checks (locks under settings)
+	if !deleteMessage {
+		if locks["stickers"] && m.Sticker != nil {
+			deleteMessage = true
+			reason = "stickers"
 		}
-		for _, entity := range m.CaptionEntities {
-			if entity.Type == "url" || entity.Type == "text_link" {
-				hasLink = true
-				break
-			}
+		if locks["gifs"] && m.Animation != nil {
+			deleteMessage = true
+			reason = "gifs"
 		}
-		if hasLink {
+		if locks["media"] && (m.Photo != nil || m.Video != nil || m.Audio != nil || m.Document != nil || m.Voice != nil || m.VideoNote != nil) {
+			deleteMessage = true
+			reason = "media"
+		}
+		if locks["forwards"] && m.ForwardOrigin != nil {
+			deleteMessage = true
+			reason = "forwards"
+			shouldWarn = true
+			warningReason = "Promotion links not allowed here!"
+		}
+		if locks["links"] && len(urlsToCheck) > 0 {
 			deleteMessage = true
 			reason = "links"
+			shouldWarn = true
+			warningReason = "Promotion links not allowed here!"
 		}
 	}
 
 	if deleteMessage {
 		_, err := m.Delete(bot, nil)
 		if err == nil {
-			_app.Log.Info("deleted message due to group lock", zap.Int64("chat_id", m.Chat.Id), zap.String("lock_type", reason), zap.Int64("user_id", m.From.Id))
+			_app.Log.Info("deleted message due to group lock/promotion", zap.Int64("chat_id", m.Chat.Id), zap.String("lock_type", reason), zap.Int64("user_id", m.From.Id))
+		}
+		if shouldWarn && m.From != nil {
+			_ = warnUserLocal(bot, m.Chat.Id, m.From, warningReason)
 		}
 		return ext.EndGroups
 	}
