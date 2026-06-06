@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"autofilterbot/internal/database"
+	"autofilterbot/internal/functions"
 	"autofilterbot/internal/model"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -327,6 +328,9 @@ var (
 )
 
 func extractTitle(fileName string) (string, string) {
+	// Remove promotional prefixes first
+	fileName = functions.CleanPromoFromName(fileName)
+
 	// Remove extension
 	if idx := strings.LastIndex(fileName, "."); idx != -1 {
 		ext := fileName[idx:]

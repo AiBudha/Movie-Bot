@@ -14,7 +14,7 @@ var promoPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)t\.me/\w+`),
 	regexp.MustCompile(`^\s*\[\s*[A-Za-z]{2,3}\s*\][\s._-]*`),
 	regexp.MustCompile(`^\s*@\w+(?:\s+[Xx])?\b[\s._-]*`),
-	regexp.MustCompile(`^\s*(?i)(?:\[\s*(?:mm|cc|mlm|dramaost)\s*\]|\(\s*(?:mm|cc|mlm|dramaost)\s*\)|(?:mm|cc|mlm|dramaost))\b[\s._-]*`),
+	regexp.MustCompile(`^\s*(?i)(?:\[\s*(?:mm|cc|mlm|dramaost|kc|tg|tc|km|kck|mmc|ms|pa|psa|yts|mkv|rxtv|ds)\s*\]|\(\s*(?:mm|cc|mlm|dramaost|kc|tg|tc|km|kck|mmc|ms|pa|psa|yts|mkv|rxtv|ds)\s*\)|(?:mm|cc|mlm|dramaost|kc|tg|tc|km|kck|mmc|ms|pa|psa|yts|mkv|rxtv|ds))(?:_|\b)[\s._-]*`),
 	regexp.MustCompile(`(?i)\bDramaOST\b`),
 }
 
