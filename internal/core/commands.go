@@ -686,8 +686,8 @@ func ConnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	if m.Chat.Type == "private" {
 		args := ctx.Args()
-		if len(args) > 0 {
-			chatIDStr := args[0]
+		if len(args) > 1 {
+			chatIDStr := args[1]
 			chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
 			if err != nil {
 				_, _ = m.Reply(bot, "❌ Invalid Group ID format. Please use a numeric ID (e.g. <code>/connect -100123456789</code>).", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
