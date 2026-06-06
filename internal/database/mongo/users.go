@@ -27,9 +27,6 @@ func (c *Client) SaveUserExtended(userId int64, source string, dc int, lang stri
 		"lang":       lang,
 		"created_at": time.Now().Unix(),
 	}
-	if dc > 0 {
-		setOnInsert["dc"] = dc
-	}
 	update := bson.M{
 		"$setOnInsert": setOnInsert,
 	}
