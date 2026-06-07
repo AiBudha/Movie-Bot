@@ -64,12 +64,12 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	}, HandleAntiFlood), autoReactionGroup-2)
 
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {
-		return !message.Command(msg)
+		return !strings.HasPrefix(msg.Text, "/") && !message.Command(msg)
 	}, HandleGroupLocks), autoReactionGroup-1)
 
 
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {
-		return !message.Command(msg)
+		return !strings.HasPrefix(msg.Text, "/") && !message.Command(msg)
 	}, func(bot *gotgbot.Bot, ctx *ext.Context) error {
 		// Dynamically fetch config to ensure we use the latest from settings panel
 		return middleware.AutoReaction(_app.Config, log)(bot, ctx)
@@ -78,7 +78,7 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	d.AddHandlerToGroup(handlers.NewMessage(message.All, conversation.MessageHandler), 0)
 
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {
-		return !message.Command(msg)
+		return !strings.HasPrefix(msg.Text, "/") && !message.Command(msg)
 	}, Autofilter), autofilterHandlerGroup)
 
 	d.AddHandlerToGroup(handlers.NewCommand("start", StartCommand), commandHandlerGroup)
