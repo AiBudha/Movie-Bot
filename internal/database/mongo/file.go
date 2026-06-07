@@ -487,6 +487,39 @@ func (c *Client) GetSpellingSuggestions(query string) ([]string, error) {
 		}
 	}
 
+	// 3. Regex Substring/Prefix fallback (if text index searches found nothing)
+	if len(files) == 0 {
+		var regexFilters []bson.M
+		for _, word := range words {
+			if len(word) >= 3 {
+				// Take the first half of the word (at least 3 characters)
+				prefixLen := len(word) / 2
+				if prefixLen < 3 {
+					prefixLen = 3
+				}
+				if prefixLen > len(word) {
+					prefixLen = len(word)
+				}
+				prefix := word[:prefixLen]
+				regexFilters = append(regexFilters, bson.M{"file_name": bson.M{"$regex": "(?i)" + regexp.QuoteMeta(prefix)}})
+			}
+		}
+		if len(regexFilters) > 0 {
+			ctx3, cancel3 := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel3()
+			cursorRegex, errRegex := c.fileCollection.Find(ctx3, bson.M{"$and": regexFilters}, options.Find().SetLimit(500))
+			if errRegex == nil {
+				defer cursorRegex.Close(ctx3)
+				for cursorRegex.Next(ctx3) {
+					var f model.File
+					if err := cursorRegex.Decode(&f); err == nil {
+						files = append(files, &f)
+					}
+				}
+			}
+		}
+	}
+
 	// We will compute Levenshtein distance on the extracted titles
 	type candidate struct {
 		title    string
