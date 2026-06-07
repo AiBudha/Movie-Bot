@@ -318,28 +318,18 @@ func (c *Config) GetPrivacyMessage() *message.Message {
 		text = c.PrivacyText
 	} else {
     text = `
-<blockquote expandable><b>Privacy Policy 📜</b>
-<i>This bot stores publicly visible data of users that is required for the bot to operate.</i>
+<blockquote>
+<b>Monetary</b>
+    This bot is a free and self-coded side project and is independent from any other creator or developer.
+    If anyone offers services like these for money please do not accept it.
 
-The following data of a user could be saved:
-• <b>Id</b> – Telegram user ID used for identification.
-• <b>Name</b> – Full name as provided by the user.
-• <b>Username</b> – @username for mentions.
-• <b>Join Requests</b> – Timestamp when the user joined a group (if applicable).
+<b>Legal</b>
+     If you feel that this bot violates any copyrights or other rules please report it at the Support Group and we will be more than happy to solve the problem.
+     The bot is almost completely community driven so the files available in the bot are uploaded by users of the bot or randomly scraped from Telegram channels.
 
-<b>How the data is used</b>
-- To enforce force‑subscribe requirements.
-- To provide user‑specific statistics and preferences.
-- To allow admins to manage bans, warnings and other moderation actions.
-- To generate personalized messages (e.g., welcome text).
+<b>Note</b>
+     If you have any inconvenience regarding the activities of the bot please let us know.
 
-<b>Data retention</b>
-All stored data is kept as long as the bot is running and the MongoDB instance remains. Users can request a full data export via the /uinfo command and can request data deletion by contacting the bot administrator.
-
-<b>Third‑party sharing</b>
-No user data is shared with third parties beyond the necessary Telegram API calls.
-
-For any concerns or data removal requests, please contact the bot maintainer.
 </blockquote>`
 	}
 

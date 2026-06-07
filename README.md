@@ -107,13 +107,13 @@ If you want to run the compiled Go binary directly on your VPS as a background s
 
 1. Build the binary on your server:
    ```bash
-   go build -o bot main.go
+   go build -o moviebot main.go
    ```
 2. Create a systemd service file:
    ```bash
    sudo nano /etc/systemd/system/moviebot.service
    ```
-3. Paste the following configuration (replace `/path/to/bot` with the actual path to your bot folder):
+3. Paste the following configuration (replace `/path/to/bot-folder` with the actual path to your bot directory):
    ```ini
    [Unit]
    Description=Movie Filter Bot Service
@@ -122,8 +122,8 @@ If you want to run the compiled Go binary directly on your VPS as a background s
    [Service]
    Type=simple
    User=root
-   WorkingDirectory=/path/to/bot
-   ExecStart=/path/to/bot/bot
+   WorkingDirectory=/path/to/bot-folder
+   ExecStart=/path/to/bot-folder/moviebot
    Restart=always
    RestartSec=5
 
@@ -146,12 +146,38 @@ If you want to run the compiled Go binary directly on your VPS as a background s
 
 If you prefer PM2 for process management:
 
-1. Build the binary: `go build -o bot main.go`.
-2. Start the binary with PM2:
+1. Install Node.js & npm (if not already installed):
+   - **Ubuntu/Debian**:
+     ```bash
+     sudo apt update
+     sudo apt install -y nodejs npm
+     ```
+   - **Fedora/RHEL**:
+     ```bash
+     sudo dnf update -y
+     sudo dnf install -y nodejs npm
+     ```
+2. Install PM2 globally:
    ```bash
-   pm2 start ./bot --name "moviebot"
+   sudo npm install -g pm2
    ```
-3. Save the process list: `pm2 save`.
+3. Build the binary:
+   ```bash
+   go build -o moviebot main.go
+   ```
+4. Start the binary with PM2:
+   ```bash
+   pm2 start ./moviebot --name "moviebot"
+   ```
+5. Set up PM2 to start on system boot:
+   ```bash
+   pm2 startup
+   ```
+   *Note: Run the command printed on the screen by `pm2 startup` to configure systemd integration.*
+6. Save the process list:
+   ```bash
+   pm2 save
+   ```
 
 ---
 
@@ -257,11 +283,39 @@ Deploy the bot on a Fedora (38/39) VPS.
    cp .env.example .env
    nano .env   # edit BOT_TOKEN, ADMINS, MONGODB_URI, etc.
    ```
-8. **Deploy** – Use Docker Compose (Method A) or build the binary:
-   ```bash
-   go build -o moviebot main.go
-   ./moviebot &
-   ```
+8. **Deploy** – Choose one of the following methods to run the bot:
+
+   - **Option 1: PM2 (Process Manager - Recommended)**
+     First, install Node.js and PM2, then build and start the bot:
+     ```bash
+     # Install Node.js and npm
+     sudo dnf install -y nodejs npm
+     
+     # Install PM2 globally
+     sudo npm install -g pm2
+     
+     # Build the bot binary
+     go build -o moviebot main.go
+     
+     # Start the bot
+     pm2 start ./moviebot --name "moviebot"
+     
+     # Setup PM2 auto-start on boot
+     pm2 startup
+     # (Copy and run the exact command outputted by 'pm2 startup' to configure systemd)
+     pm2 save
+     ```
+
+   - **Option 2: Docker Compose (Method A)**
+     ```bash
+     docker compose up --build -d
+     ```
+
+   - **Option 3: Run in background manually**
+     ```bash
+     go build -o moviebot main.go
+     ./moviebot &
+     ```
 9. **Configure firewall** – Allow SSH and optional health‑check port:
    ```bash
    firewall-cmd --add-service=ssh --permanent

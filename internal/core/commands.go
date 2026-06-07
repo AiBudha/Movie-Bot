@@ -78,7 +78,9 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 		msg = _app.Config.GetStartMessage(bot.Username)
 	case "about":
 		msg = _app.Config.GetAboutMessage()
-		lat := time.Since(time.Unix(ctx.EffectiveMessage.Date, 0))
+		start := time.Now()
+		_, _ = bot.GetMe(nil)
+		lat := time.Since(start)
 		extraValues = map[string]any{
 			"os":         runtime.GOOS,
 			"database":   _app.DB.GetName(),
