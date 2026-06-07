@@ -158,7 +158,7 @@ func (c *Config) GetGroupHelpMessage() *message.Message {
 ┊ /clearrules - Delete group rules
 ┊ /rules - View group rules
 ┊ /locks - View lock status of content types
-┊ /lock &lt;type&gt; - Lock a content type (stickers, gifs, media, forwards, links)
+┊ /lock &lt;type&gt; - Lock a content type (stickers, gifs, media, forwards, links, service)
 ┊ /unlock &lt;type&gt; - Unlock a content type
 ┊ /setflood &lt;num&gt; - Set flood control limit
 ┊ /captcha &lt;on/off&gt; - Enable/disable CAPTCHA

@@ -831,6 +831,40 @@ func HandleWelcomeMessage(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
+func isServiceMessage(m *gotgbot.Message) bool {
+	if m == nil {
+		return false
+	}
+	return len(m.NewChatMembers) > 0 ||
+		m.LeftChatMember != nil ||
+		m.NewChatTitle != "" ||
+		len(m.NewChatPhoto) > 0 ||
+		m.DeleteChatPhoto ||
+		m.GroupChatCreated ||
+		m.SupergroupChatCreated ||
+		m.ChannelChatCreated ||
+		m.MessageAutoDeleteTimerChanged != nil ||
+		m.MigrateToChatId != 0 ||
+		m.MigrateFromChatId != 0 ||
+		m.PinnedMessage != nil ||
+		m.Invoice != nil ||
+		m.SuccessfulPayment != nil ||
+		m.UsersShared != nil ||
+		m.ChatShared != nil ||
+		m.WriteAccessAllowed != nil ||
+		m.ForumTopicCreated != nil ||
+		m.ForumTopicEdited != nil ||
+		m.ForumTopicClosed != nil ||
+		m.ForumTopicReopened != nil ||
+		m.GeneralForumTopicHidden != nil ||
+		m.GeneralForumTopicUnhidden != nil ||
+		m.VideoChatScheduled != nil ||
+		m.VideoChatStarted != nil ||
+		m.VideoChatEnded != nil ||
+		m.VideoChatParticipantsInvited != nil ||
+		m.WebAppData != nil
+}
+
 // Group locks message handler
 func HandleGroupLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 	m := ctx.EffectiveMessage
@@ -952,6 +986,10 @@ func HandleGroupLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 			shouldWarn = true
 			warningReason = "Promotion links not allowed here!"
 		}
+		if locks["service"] && isServiceMessage(m) {
+			deleteMessage = true
+			reason = "service"
+		}
 	}
 
 	if deleteMessage {
@@ -1006,6 +1044,7 @@ func getGroupLocksMarkup(cfg *model.GroupConfig) gotgbot.InlineKeyboardMarkup {
 			},
 			{
 				{Text: "Links: " + status("links"), CallbackData: "gcfg:lock_toggle:links"},
+				{Text: "Service: " + status("service"), CallbackData: "gcfg:lock_toggle:service"},
 			},
 			{
 				{Text: "Back 🔙", CallbackData: "gcfg:home"},
@@ -1231,8 +1270,9 @@ func ShowLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 			"• Gifs: %s\n"+
 			"• Media: %s\n"+
 			"• Forwards: %s\n"+
-			"• Links: %s\n",
-		status("stickers"), status("gifs"), status("media"), status("forwards"), status("links"),
+			"• Links: %s\n"+
+			"• Service Messages: %s\n",
+		status("stickers"), status("gifs"), status("media"), status("forwards"), status("links"), status("service"),
 	)
 
 	_, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
@@ -1252,14 +1292,14 @@ func LockCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	args := getCommandArgs(ctx)
 	if len(args) == 0 {
-		_, _ = m.Reply(bot, "Please specify a lock type. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		_, _ = m.Reply(bot, "Please specify a lock type. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>, <code>service</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
 	}
 
 	lockType := strings.ToLower(args[0])
-	validLocks := map[string]bool{"stickers": true, "gifs": true, "media": true, "forwards": true, "links": true}
+	validLocks := map[string]bool{"stickers": true, "gifs": true, "media": true, "forwards": true, "links": true, "service": true}
 	if !validLocks[lockType] {
-		_, _ = m.Reply(bot, "Invalid lock type. Choose from: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		_, _ = m.Reply(bot, "Invalid lock type. Choose from: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>, <code>service</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
 	}
 
@@ -1295,14 +1335,14 @@ func UnlockCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	args := getCommandArgs(ctx)
 	if len(args) == 0 {
-		_, _ = m.Reply(bot, "Please specify a lock type to unlock. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		_, _ = m.Reply(bot, "Please specify a lock type to unlock. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>, <code>service</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
 	}
 
 	lockType := strings.ToLower(args[0])
-	validLocks := map[string]bool{"stickers": true, "gifs": true, "media": true, "forwards": true, "links": true}
+	validLocks := map[string]bool{"stickers": true, "gifs": true, "media": true, "forwards": true, "links": true, "service": true}
 	if !validLocks[lockType] {
-		_, _ = m.Reply(bot, "Invalid lock type. Choose from: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		_, _ = m.Reply(bot, "Invalid lock type. Choose from: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>, <code>service</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
 	}
 
