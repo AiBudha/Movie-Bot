@@ -441,26 +441,82 @@ func (c *Client) GetSpellingSuggestions(query string) ([]string, error) {
 		return nil, nil
 	}
 
-	var files []*model.File
+	maxAllowedDist := len(query) / 2
+	if maxAllowedDist < 3 {
+		maxAllowedDist = 3
+	}
+
+	type candidate struct {
+		title    string
+		distance int
+		year     string
+	}
+
+	var suggestions []string
+	seenSugs := make(map[string]bool)
+
+	addSuggestionsFromFiles := func(files []*model.File) {
+		var cands []candidate
+		seenTitles := make(map[string]bool)
+
+		for _, f := range files {
+			title, year := extractTitle(f.FileName)
+			lowerTitle := strings.ToLower(title)
+			if seenTitles[lowerTitle] {
+				continue
+			}
+			seenTitles[lowerTitle] = true
+
+			dist := levenshtein(lowerTitle, strings.ToLower(query))
+			if dist <= maxAllowedDist {
+				cands = append(cands, candidate{
+					title:    title,
+					distance: dist,
+					year:     year,
+				})
+			}
+		}
+
+		sort.Slice(cands, func(i, j int) bool {
+			if cands[i].distance != cands[j].distance {
+				return cands[i].distance < cands[j].distance
+			}
+			return cands[i].year > cands[j].year
+		})
+
+		for _, cand := range cands {
+			sug := cand.title
+			if cand.year != "" {
+				sug = fmt.Sprintf("%s (%s)", cand.title, cand.year)
+			}
+			lowerSug := strings.ToLower(sug)
+			if !seenSugs[lowerSug] {
+				seenSugs[lowerSug] = true
+				suggestions = append(suggestions, sug)
+			}
+		}
+	}
 
 	// 1. Try Text Search first (fully indexed, extremely fast!)
 	searchTerms := strings.Join(words, " ")
 	textFilter := bson.D{{Key: "$text", Value: bson.D{{Key: "$search", Value: searchTerms}}}}
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel1()
 	cursor, err := c.fileCollection.Find(ctx1, textFilter, options.Find().SetLimit(100))
 	if err == nil {
-		defer cursor.Close(ctx1)
+		var files1 []*model.File
 		for cursor.Next(ctx1) {
 			var f model.File
 			if err := cursor.Decode(&f); err == nil {
-				files = append(files, &f)
+				files1 = append(files1, &f)
 			}
 		}
+		cursor.Close(ctx1)
+		addSuggestionsFromFiles(files1)
 	}
+	cancel1()
 
-	// 2. Fallback: Try fuzzy variations text search if exact text search returned nothing
-	if len(files) == 0 {
+	// 2. Fallback: Try fuzzy variations text search if we have fewer than 5 suggestions
+	if len(suggestions) < 5 {
 		var fuzzyTerms []string
 		for _, word := range words {
 			if len(word) >= 3 {
@@ -473,22 +529,24 @@ func (c *Client) GetSpellingSuggestions(query string) ([]string, error) {
 			fuzzySearch := strings.Join(fuzzyTerms, " ")
 			textFilterFuzzy := bson.D{{Key: "$text", Value: bson.D{{Key: "$search", Value: fuzzySearch}}}}
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel2()
 			cursorFuzzy, errFuzzy := c.fileCollection.Find(ctx2, textFilterFuzzy, options.Find().SetLimit(100))
 			if errFuzzy == nil {
-				defer cursorFuzzy.Close(ctx2)
+				var files2 []*model.File
 				for cursorFuzzy.Next(ctx2) {
 					var f model.File
 					if err := cursorFuzzy.Decode(&f); err == nil {
-						files = append(files, &f)
+						files2 = append(files2, &f)
 					}
 				}
+				cursorFuzzy.Close(ctx2)
+				addSuggestionsFromFiles(files2)
 			}
+			cancel2()
 		}
 	}
 
-	// 3. Regex Substring/Prefix fallback (if text index searches found nothing)
-	if len(files) == 0 {
+	// 3. Regex Substring/Prefix fallback if we still have fewer than 5 suggestions
+	if len(suggestions) < 5 {
 		var regexFilters []bson.M
 		for _, word := range words {
 			if len(word) >= 3 {
@@ -506,75 +564,24 @@ func (c *Client) GetSpellingSuggestions(query string) ([]string, error) {
 		}
 		if len(regexFilters) > 0 {
 			ctx3, cancel3 := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel3()
 			cursorRegex, errRegex := c.fileCollection.Find(ctx3, bson.M{"$and": regexFilters}, options.Find().SetLimit(500))
 			if errRegex == nil {
-				defer cursorRegex.Close(ctx3)
+				var files3 []*model.File
 				for cursorRegex.Next(ctx3) {
 					var f model.File
 					if err := cursorRegex.Decode(&f); err == nil {
-						files = append(files, &f)
+						files3 = append(files3, &f)
 					}
 				}
+				cursorRegex.Close(ctx3)
+				addSuggestionsFromFiles(files3)
 			}
+			cancel3()
 		}
 	}
 
-	// We will compute Levenshtein distance on the extracted titles
-	type candidate struct {
-		title    string
-		distance int
-		year     string
-	}
-
-	var candidates []candidate
-	seen := make(map[string]bool)
-
-	for _, f := range files {
-		title, year := extractTitle(f.FileName)
-		lowerTitle := strings.ToLower(title)
-		if seen[lowerTitle] {
-			continue
-		}
-		seen[lowerTitle] = true
-
-		dist := levenshtein(lowerTitle, strings.ToLower(query))
-
-		// If Levenshtein distance is small enough (e.g. <= queryLength/2 or <= 4), it's a good spelling match!
-		maxAllowedDist := len(query) / 2
-		if maxAllowedDist < 3 {
-			maxAllowedDist = 3
-		}
-
-		if dist <= maxAllowedDist {
-			candidates = append(candidates, candidate{
-				title:    title,
-				distance: dist,
-				year:     year,
-			})
-		}
-	}
-
-	// Sort candidates:
-	// 1. Distance (ascending)
-	// 2. Year (descending)
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].distance != candidates[j].distance {
-			return candidates[i].distance < candidates[j].distance
-		}
-		return candidates[i].year > candidates[j].year
-	})
-
-	var suggestions []string
-	for _, cand := range candidates {
-		if len(suggestions) >= 5 {
-			break
-		}
-		sug := cand.title
-		if cand.year != "" {
-			sug = fmt.Sprintf("%s (%s)", cand.title, cand.year)
-		}
-		suggestions = append(suggestions, sug)
+	if len(suggestions) > 5 {
+		suggestions = suggestions[:5]
 	}
 
 	return suggestions, nil
