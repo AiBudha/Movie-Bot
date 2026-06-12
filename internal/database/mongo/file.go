@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.uber.org/zap"
 )
 
 func (c *Client) SaveFile(f *model.File) error {
@@ -311,25 +312,6 @@ func (c *Client) SearchFiles(query string) (database.Cursor, error) {
 		files = filterByGoRegex(candidates)
 	}
 
-	// --- Phase 2: Fallback — full collection scan filtered in Go ---
-	// Only runs if text search returned nothing (e.g. single rare word not in text index).
-	if len(files) == 0 {
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel2()
-		cursorAll, errAll := c.fileCollection.Find(ctx2, bson.D{}, options.Find().SetSort(bson.M{"time": -1}).SetLimit(1000))
-		if errAll == nil {
-			defer cursorAll.Close(ctx2)
-			var candidates []*model.File
-			for cursorAll.Next(ctx2) {
-				var f model.File
-				if err := cursorAll.Decode(&f); err == nil {
-					candidates = append(candidates, &f)
-				}
-			}
-			files = filterByGoRegex(candidates)
-		}
-	}
-
 	return &sliceCursor{files: files, index: -1}, nil
 }
 
@@ -390,36 +372,6 @@ func extractTitle(fileName string) (string, string) {
 	}
 	
 	return title, year
-}
-
-func levenshtein(s, t string) int {
-	s = strings.ToLower(s)
-	t = strings.ToLower(t)
-	d := make([][]int, len(s)+1)
-	for i := range d {
-		d[i] = make([]int, len(t)+1)
-		d[i][0] = i
-	}
-	for j := range d[0] {
-		d[0][j] = j
-	}
-	for i := 1; i <= len(s); i++ {
-		for j := 1; j <= len(t); j++ {
-			if s[i-1] == t[j-1] {
-				d[i][j] = d[i-1][j-1]
-			} else {
-				min := d[i-1][j]
-				if d[i][j-1] < min {
-					min = d[i][j-1]
-				}
-				if d[i-1][j-1] < min {
-					min = d[i-1][j-1]
-				}
-				d[i][j] = min + 1
-			}
-		}
-	}
-	return d[len(s)][len(t)]
 }
 
 func getFuzzyTerms(word string) []string {
@@ -494,7 +446,7 @@ func (c *Client) GetSpellingSuggestions(query string) ([]string, error) {
 			}
 			seenTitles[lowerTitle] = true
 
-			dist := levenshtein(lowerTitle, strings.ToLower(query))
+			dist := functions.Levenshtein(lowerTitle, strings.ToLower(query))
 			if dist <= maxAllowedDist {
 				cands = append(cands, candidate{
 					title:    title,
@@ -635,4 +587,89 @@ func (c *Client) GetRecent2026Files(limit int) ([]*model.File, error) {
 	return files, nil
 }
 
+func (c *Client) CleanDuplicates(ctx context.Context, log *zap.Logger) (int, error) {
+	log.Info("mongo: starting database duplicate cleanup...")
+	var totalDeleted int
+	for _, coll := range c.fileCollection.allCollections {
+		// 1. Clean up duplicate file_ids
+		pipelineFileId := mongo.Pipeline{
+			{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$file_id"},
+				{Key: "ids", Value: bson.D{{Key: "$push", Value: "$_id"}}},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			}}},
+			{{Key: "$match", Value: bson.D{
+				{Key: "count", Value: bson.D{{Key: "$gt", Value: 1}}},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipelineFileId)
+		if err == nil {
+			var results []struct {
+				FileID string   `bson:"_id"`
+				IDs    []string `bson:"ids"`
+			}
+			if err := cursor.All(ctx, &results); err == nil {
+				deletedCount := 0
+				for _, res := range results {
+					if len(res.IDs) > 1 {
+						// Keep the first ID, delete the rest
+						toDelete := res.IDs[1:]
+						resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
+						if err == nil {
+							deletedCount += int(resDel.DeletedCount)
+						}
+					}
+				}
+				if deletedCount > 0 {
+					log.Info("mongo: cleaned up duplicate file_ids", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
+					totalDeleted += deletedCount
+				}
+			}
+			cursor.Close(ctx)
+		} else {
+			log.Warn("mongo: aggregate for duplicate file_ids failed", zap.Error(err), zap.String("collection", coll.Name()))
+		}
 
+		// 2. Clean up duplicate file_name + file_size
+		pipelineNameSize := mongo.Pipeline{
+			{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: bson.D{
+					{Key: "name", Value: "$file_name"},
+					{Key: "size", Value: "$file_size"},
+				}},
+				{Key: "ids", Value: bson.D{{Key: "$push", Value: "$_id"}}},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			}}},
+			{{Key: "$match", Value: bson.D{
+				{Key: "count", Value: bson.D{{Key: "$gt", Value: 1}}},
+			}}},
+		}
+		cursor, err = coll.Aggregate(ctx, pipelineNameSize)
+		if err == nil {
+			var results []struct {
+				IDs []string `bson:"ids"`
+			}
+			if err := cursor.All(ctx, &results); err == nil {
+				deletedCount := 0
+				for _, res := range results {
+					if len(res.IDs) > 1 {
+						toDelete := res.IDs[1:]
+						resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
+						if err == nil {
+							deletedCount += int(resDel.DeletedCount)
+						}
+					}
+				}
+				if deletedCount > 0 {
+					log.Info("mongo: cleaned up duplicate name/size files", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
+					totalDeleted += deletedCount
+				}
+			}
+			cursor.Close(ctx)
+		} else {
+			log.Warn("mongo: aggregate for duplicate name/size failed", zap.Error(err), zap.String("collection", coll.Name()))
+		}
+	}
+	log.Info("mongo: database duplicate cleanup completed.", zap.Int("total_deleted", totalDeleted))
+	return totalDeleted, nil
+}

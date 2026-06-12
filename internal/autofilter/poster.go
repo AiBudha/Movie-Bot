@@ -669,3 +669,8 @@ func extractYear(s string) string {
 	r := regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	return r.FindString(s)
 }
+
+// ExtractYear extracts a 4-digit release year (1900-2099) from a string.
+func ExtractYear(s string) string {
+	return extractYear(s)
+}

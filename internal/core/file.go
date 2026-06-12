@@ -10,6 +10,7 @@ import (
 	"autofilterbot/internal/database"
 	"autofilterbot/internal/fsub"
 	"autofilterbot/internal/functions"
+	"autofilterbot/internal/model"
 	"autofilterbot/pkg/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -42,6 +43,12 @@ func NewFile(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		_app.Log.Warn("newfile: failed to save file", zap.Error(err))
+	} else {
+		if _app.Cache != nil && _app.Cache.SearchCache != nil {
+			_app.Cache.SearchCache.Clear()
+		}
+		// Asynchronously check and trigger automated channel posting for new releases
+		go AutoPostNewRelease(bot, file)
 	}
 
 	return nil
@@ -98,6 +105,10 @@ func DeleteFile(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		_app.Log.Warn("delete file failed", zap.String("file_id", fileUniqueId), zap.Error(err))
 		return nil
+	} else {
+		if _app.Cache != nil && _app.Cache.SearchCache != nil {
+			_app.Cache.SearchCache.Clear()
+		}
 	}
 
 	if replyToMsg != nil {
@@ -209,7 +220,13 @@ func DeleteAllFiles(bot *gotgbot.Bot, ctx *ext.Context) error {
 			continue
 		}
 
-		deleted += 1
+		deleted++
+	}
+
+	if deleted > 0 {
+		if _app.Cache != nil && _app.Cache.SearchCache != nil {
+			_app.Cache.SearchCache.Clear()
+		}
 	}
 
 	text := fmt.Sprintf("<i><b>✅ Deleted %d Files Successfully !</b></i>", deleted)
@@ -252,7 +269,7 @@ func CleanQuality(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	keywords := []string{"camrip", "predvd", "hdcam", "telecine", "hc", "hdtc", "tc", "p-dvd", "ts", "hd-cam"}
+	keywords := []string{"camrip", "predvd", "hdcam", "telecine", "hc", "hdtc", "tc", "p-dvd", "ts", "hd-cam", "telesync", "screener", "dvdscr", "scr", "pre-dvd", "hq-cam", "hqcam"}
 
 	m := ctx.EffectiveMessage
 	var progM *gotgbot.Message
@@ -277,16 +294,23 @@ func CleanQuality(bot *gotgbot.Bot, ctx *ext.Context) error {
 			continue
 		}
 
-		f, _ := autofilter.FilesFromCursor(context.Background(), cursor, DeleteAllCursorOptions{})
-		if len(f) > 0 && len(f[0]) > 0 {
-			for _, file := range f[0] {
-				// Only delete if it strictly matches one of the garbage keywords or has low quality score
+		for cursor.Next(context.Background()) {
+			var file model.File
+			if err := cursor.Decode(&file); err == nil {
+				// Only delete if it matches one of the garbage/leak keywords or has low quality score
 				if autofilter.IsGarbageFile(file.FileName) || autofilter.QualityLevel(file.FileName) <= 15 {
 					if _app.DB.DeleteFile(file.UniqueId) == nil {
 						totalDeleted++
 					}
 				}
 			}
+		}
+		cursor.Close(context.Background())
+	}
+
+	if totalDeleted > 0 {
+		if _app.Cache != nil && _app.Cache.SearchCache != nil {
+			_app.Cache.SearchCache.Clear()
 		}
 	}
 
@@ -299,6 +323,54 @@ func CleanQuality(bot *gotgbot.Bot, ctx *ext.Context) error {
 	})
 	if err != nil {
 		_app.Log.Warn("cleanquality: edit final result failed", zap.Error(err))
+	}
+
+	return nil
+}
+
+// CleanDuplicatesCommand handles duplicates deletion triggered from the admin panel.
+func CleanDuplicatesCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
+	if !_app.AuthAdmin(ctx) {
+		return nil
+	}
+
+	m := ctx.EffectiveMessage
+	var progM *gotgbot.Message
+	var err error
+
+	if ctx.CallbackQuery != nil {
+		_, _, err = ctx.CallbackQuery.Message.EditText(bot, "🧹 <i>Scanning and cleaning duplicate files... This may take a moment.</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+		progM = ctx.CallbackQuery.Message.(*gotgbot.Message)
+	} else {
+		progM, err = m.Reply(bot, "🧹 <i>Scanning and cleaning duplicate files... This may take a moment.</i>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+	}
+
+	if err != nil {
+		_app.Log.Warn("cleandups: send/edit progress failed", zap.Error(err))
+		return nil
+	}
+
+	deletedCount, err := _app.DB.CleanDuplicates(_app.Ctx, _app.Log)
+	if err != nil {
+		_, _, _ = progM.EditText(bot, fmt.Sprintf("❌ <b>Cleanup failed:</b> <code>%s</code>", err.Error()), &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+		return nil
+	}
+
+	if deletedCount > 0 {
+		if _app.Cache != nil && _app.Cache.SearchCache != nil {
+			_app.Cache.SearchCache.Clear()
+		}
+	}
+
+	text := fmt.Sprintf("<b>✅ Duplicate Cleanup Complete !</b>\n\nDeleted <code>%d</code> duplicate file records.", deletedCount)
+	_, _, err = progM.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+		ParseMode: gotgbot.ParseModeHTML,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{
+			Text: "🔙 Back", CallbackData: "admin:back",
+		}}}},
+	})
+	if err != nil {
+		_app.Log.Warn("cleandups: edit final result failed", zap.Error(err))
 	}
 
 	return nil

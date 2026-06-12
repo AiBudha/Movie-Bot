@@ -2,6 +2,7 @@ package functions
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 
 	"autofilterbot/internal/model"
@@ -10,12 +11,11 @@ import (
 
 var ErrFileNotFound = errors.New("no media was found in the message")
 
-// HasVideoOrArchiveExtension returns true if the filename matches allowed video/archive extensions.
+// HasVideoOrArchiveExtension returns true if the filename matches allowed video extensions.
 func HasVideoOrArchiveExtension(fileName string) bool {
 	fileName = strings.ToLower(fileName)
 	allowedExts := []string{
 		".mkv", ".mp4", ".avi", ".webm", ".mov", ".flv", ".wmv", ".3gp", ".m4v", ".ts", ".mpg", ".mpeg",
-		".zip", ".rar", ".7z", ".tar",
 	}
 	for _, ext := range allowedExts {
 		if strings.HasSuffix(fileName, ext) {
@@ -25,16 +25,15 @@ func HasVideoOrArchiveExtension(fileName string) bool {
 	return false
 }
 
+var garbageRegex = regexp.MustCompile(`(?i)\b(sample|trailer|camrip|predvd|hdcam|telecine|hdtc|p-dvd|telesync|screener|dvdscr|scr|pre-dvd|hq-cam|hqcam|hc|tc|ts|cam)\b`)
+
 // IsGarbageFile returns true if the filename contains garbage patterns like samples, subtitles, etc.
 func IsGarbageFile(fileName string) bool {
 	lower := strings.ToLower(fileName)
-	garbage := []string{"sample", "trailer", ".srt", ".txt", "nfo", "idx", "sub", "camrip", "predvd", "hdcam", "telecine", "hdtc", "p-dvd"}
-	for _, g := range garbage {
-		if strings.Contains(lower, g) {
-			return true
-		}
+	if strings.HasSuffix(lower, ".srt") || strings.HasSuffix(lower, ".txt") || strings.HasSuffix(lower, ".nfo") || strings.HasSuffix(lower, ".idx") || strings.HasSuffix(lower, ".sub") {
+		return true
 	}
-	return false
+	return garbageRegex.MatchString(lower)
 }
 
 // FileFromMessage extracts data about a file from the message.

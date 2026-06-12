@@ -152,3 +152,30 @@ func (c *Client) GetUserConnection(userId int64) (int64, error) {
 	}
 	return user.ConnectedChatID, nil
 }
+
+// AddUserConnection adds a group chat ID to the user's list of connected groups (no duplicates).
+func (c *Client) AddUserConnection(userId int64, chatID int64) error {
+	filter := idFilter(userId)
+	// $addToSet ensures no duplicates
+	update := bson.M{"$addToSet": bson.M{"connected_chat_ids": chatID}}
+	opts := options.Update().SetUpsert(true)
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update, opts)
+	return err
+}
+
+// RemoveUserConnection removes a group chat ID from the user's connected groups list.
+func (c *Client) RemoveUserConnection(userId int64, chatID int64) error {
+	filter := idFilter(userId)
+	update := bson.M{"$pull": bson.M{"connected_chat_ids": chatID}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+// GetUserConnections returns all group chat IDs the user has connected.
+func (c *Client) GetUserConnections(userId int64) ([]int64, error) {
+	user, err := c.GetUser(userId)
+	if err != nil {
+		return nil, err
+	}
+	return user.ConnectedChatIDs, nil
+}

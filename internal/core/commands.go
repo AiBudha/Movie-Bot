@@ -696,7 +696,7 @@ func ConnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 				return nil
 			}
 
-			// Verify membership (must be a member of the group)
+			// Verify membership
 			member, err := bot.GetChatMember(chatID, m.From.Id, nil)
 			if err != nil {
 				_, _ = m.Reply(bot, "❌ Make sure the bot is added to the group first, and that you are a member of it.", nil)
@@ -718,8 +718,8 @@ func ConnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 				return nil
 			}
 
-			// Save connection
-			err = _app.DB.SetUserConnection(m.From.Id, chatID)
+			// Add to multi-group list
+			err = _app.DB.AddUserConnection(m.From.Id, chatID)
 			if err != nil {
 				_, _ = m.Reply(bot, "❌ Failed to connect: DB error.", nil)
 				return nil
@@ -730,18 +730,24 @@ func ConnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 			if err == nil && chat != nil {
 				title = chat.Title
 			}
-			_, err = m.Reply(bot, fmt.Sprintf("✅ Successfully connected to <b>%s</b>!\nNow you can search this group's files and configure settings directly in PM.", htmlEscape(title)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			_, err = m.Reply(bot, fmt.Sprintf("✅ Successfully connected to <b>%s</b>!\nNow you can use /gsettings in PM to manage this group.", htmlEscape(title)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 			return err
 		}
 
-		connChatID, err := _app.DB.GetUserConnection(m.From.Id)
-		if err == nil && connChatID != 0 {
-			chat, err := bot.GetChat(connChatID, nil)
-			title := fmt.Sprintf("%d", connChatID)
-			if err == nil && chat != nil {
-				title = chat.Title
+		// Show currently connected groups
+		chatIDs, err := _app.DB.GetUserConnections(m.From.Id)
+		if err == nil && len(chatIDs) > 0 {
+			text := "🔌 <b>Your connected groups:</b>\n\n"
+			for i, id := range chatIDs {
+				chat, err := bot.GetChat(id, nil)
+				title := fmt.Sprintf("%d", id)
+				if err == nil && chat != nil {
+					title = chat.Title
+				}
+				text += fmt.Sprintf("%d. <b>%s</b> (<code>%d</code>)\n", i+1, htmlEscape(title), id)
 			}
-			_, err = m.Reply(bot, fmt.Sprintf("✅ You are currently connected to: <b>%s</b>\nUse /disconnect to disconnect.", htmlEscape(title)), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			text += "\nUse /disconnect to remove a group, or /gsettings to manage one."
+			_, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 			return err
 		}
 
@@ -763,7 +769,7 @@ func ConnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}}},
 	}
 
-	_, err = m.Reply(bot, "<b>🔌 Connect to PM</b>\n\nClick the button below to connect this group chat to your private messages. This will allow you to search this group's files directly in the bot's PM.", &gotgbot.SendMessageOpts{
+	_, err = m.Reply(bot, "<b>🔌 Connect to PM</b>\n\nClick the button below to connect this group chat to your private messages. This will allow you to search this group's files and manage settings directly in the bot's PM.", &gotgbot.SendMessageOpts{
 		ParseMode:   gotgbot.ParseModeHTML,
 		ReplyMarkup: markup,
 	})
@@ -777,19 +783,45 @@ func DisconnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if m.Chat.Type == "private" {
-		connChatID, err := _app.DB.GetUserConnection(m.From.Id)
-		if err != nil || connChatID == 0 {
-			_, err = m.Reply(bot, "❌ You are not connected to any chat.", nil)
+		chatIDs, err := _app.DB.GetUserConnections(m.From.Id)
+		if err != nil || len(chatIDs) == 0 {
+			_, err = m.Reply(bot, "❌ You are not connected to any group.", nil)
 			return err
 		}
 
-		err = _app.DB.SetUserConnection(m.From.Id, 0)
-		if err != nil {
-			_, err = m.Reply(bot, "❌ Failed to disconnect: DB error.", nil)
+		if len(chatIDs) == 1 {
+			// Only one — disconnect directly
+			err = _app.DB.RemoveUserConnection(m.From.Id, chatIDs[0])
+			if err != nil {
+				_, err = m.Reply(bot, "❌ Failed to disconnect: DB error.", nil)
+				return err
+			}
+			_, err = m.Reply(bot, "🔌 Disconnected successfully!", nil)
 			return err
 		}
 
-		_, err = m.Reply(bot, "🔌 Disconnected successfully!", nil)
+		// Multiple — show picker
+		var rows [][]gotgbot.InlineKeyboardButton
+		for _, id := range chatIDs {
+			chat, err := bot.GetChat(id, nil)
+			title := fmt.Sprintf("%d", id)
+			if err == nil && chat != nil {
+				title = chat.Title
+			}
+			rows = append(rows, []gotgbot.InlineKeyboardButton{{
+				Text:         fmt.Sprintf("❌ %s", title),
+				CallbackData: fmt.Sprintf("gconn:disc:%d", id),
+			}})
+		}
+		rows = append(rows, []gotgbot.InlineKeyboardButton{{
+			Text:         "❌ Disconnect All",
+			CallbackData: "gconn:disc:all",
+		}})
+		markup := gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+		_, err = m.Reply(bot, "🔌 <b>Select a group to disconnect:</b>", &gotgbot.SendMessageOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: markup,
+		})
 		return err
 	}
 
@@ -799,7 +831,7 @@ func DisconnectCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	err = _app.DB.SetUserConnection(m.From.Id, 0)
+	err = _app.DB.RemoveUserConnection(m.From.Id, m.Chat.Id)
 	if err != nil {
 		_, err = m.Reply(bot, "❌ Failed to disconnect: DB error.", nil)
 		return err

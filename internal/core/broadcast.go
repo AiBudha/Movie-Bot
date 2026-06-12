@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"autofilterbot/internal/button"
@@ -221,6 +223,63 @@ func HandleCancelBroadcast(bot *gotgbot.Bot, ctx *ext.Context, bId string) error
 	return nil
 }
 
+type broadcastLimiter struct {
+	ch chan struct{}
+}
+
+func newBroadcastLimiter(rate int) *broadcastLimiter {
+	l := &broadcastLimiter{
+		ch: make(chan struct{}, rate),
+	}
+	go func() {
+		ticker := time.NewTicker(time.Second / time.Duration(rate))
+		defer ticker.Stop()
+		for range ticker.C {
+			select {
+			case l.ch <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return l
+}
+
+func (l *broadcastLimiter) Wait() {
+	<-l.ch
+}
+
+func drawProgressBar(percent float64) string {
+	const barWidth = 10
+	filled := int(percent * barWidth)
+	if filled > barWidth {
+		filled = barWidth
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	bar := ""
+	for i := 0; i < filled; i++ {
+		bar += "█"
+	}
+	for i := filled; i < barWidth; i++ {
+		bar += "░"
+	}
+	return bar
+}
+
+func formatDuration(d time.Duration) string {
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
 // RunBroadcast executes the broadcast in the background and reports progress.
 func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessageId int64) {
 	b, err := _app.DB.GetBroadcast(bId)
@@ -235,8 +294,45 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 		return
 	}
 
-	p := newBroadcastProgress()
-	p.total = len(userIds)
+	total := len(userIds)
+	if total == 0 {
+		_app.DB.UpdateBroadcast(bId, map[string]interface{}{"status": "completed"})
+		bot.EditMessageText("<b>Broadcast Completed: No target users found.</b>", &gotgbot.EditMessageTextOpts{
+			ChatId: adminChatId, MessageId: progressMessageId, ParseMode: gotgbot.ParseModeHTML,
+		})
+		return
+	}
+
+	// Create a cancellable context for workers
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	defer cancelWorkers()
+
+	// Initialize progress variables (thread-safe using mutex)
+	var mu sync.Mutex
+	progress := &broadcastProgress{
+		total: total,
+	}
+
+	startTime := time.Now()
+	
+	// Create a separate rate limiter for the broadcast (e.g. 20 msgs/sec)
+	// This leaves 10 reqs/sec of the Telegram 30 reqs/sec limit for regular users!
+	lim := newBroadcastLimiter(20)
+
+	// Channel for user IDs
+	jobsChan := make(chan int64, total)
+	for _, uId := range userIds {
+		jobsChan <- uId
+	}
+	close(jobsChan)
+
+	var sentMsgs []model.BroadcastMessage
+	var sentMsgsMu sync.Mutex
+
+	// Spawn workers
+	numWorkers := 15
+	var wg sync.WaitGroup
+	wg.Add(numWorkers)
 
 	method := MethodFromString(b.Method)
 	opts := &send.SendOpts{
@@ -245,107 +341,172 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 		Keyboard: b.InlineKeyboard,
 	}
 
-	var sentMsgs []model.BroadcastMessage
+	for w := 0; w < numWorkers; w++ {
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case uId, ok := <-jobsChan:
+					if !ok {
+						return
+					}
 
-	for _, uId := range userIds {
-		if _app.Ctx.Err() != nil {
+					// Dynamic zero-width space padding for anti-ban
+					userOpts := *opts
+					paddingCount := int((time.Now().UnixNano() / 1000) % 10) + 1
+					userOpts.Text = b.Text + strings.Repeat("\u200B", paddingCount)
+
+					var success bool
+					var lastErr error
+					var sentM *gotgbot.Message
+
+					for attempt := 0; attempt < 3; attempt++ {
+						select {
+						case <-workerCtx.Done():
+							return
+						default:
+						}
+
+						// Wait for the broadcast rate limiter (does NOT block main global limiter!)
+						lim.Wait()
+
+						sentM, lastErr = method(bot, uId, &userOpts)
+						if lastErr == nil {
+							success = true
+							break
+						}
+
+						if floodErr, ok := functions.AsFloodWait(lastErr); ok {
+							_app.Log.Info("broadcast: flood wait detected, sleeping", zap.Int64("duration_seconds", floodErr.Duration), zap.Int64("user_id", uId))
+							// Sleep on flood wait, respecting workerCtx cancel
+							select {
+							case <-workerCtx.Done():
+								return
+							case <-time.After(time.Second * time.Duration(floodErr.Duration)):
+							}
+							attempt--
+							continue
+						}
+
+						if functions.IsChatNotFoundErr(lastErr) || strings.Contains(lastErr.Error(), "deactivated") {
+							break
+						}
+
+						select {
+						case <-workerCtx.Done():
+							return
+						case <-time.After(time.Second * time.Duration(attempt+1)):
+						}
+					}
+
+					mu.Lock()
+					if !success {
+						progress.failed++
+						errStr := lastErr.Error()
+						switch {
+						case strings.Contains(errStr, "blocked"):
+							_app.DB.DeleteUser(uId)
+							progress.blocked++
+						case strings.Contains(errStr, "deactivated") || strings.Contains(errStr, "deleted"):
+							_app.DB.DeleteUser(uId)
+							progress.deleted++
+						case strings.Contains(errStr, "chat not found"):
+							_app.DB.DeleteUser(uId)
+							progress.blocked++
+						default:
+							progress.otherErr++
+						}
+					} else {
+						progress.success++
+						if sentM != nil {
+							sentMsgsMu.Lock()
+							sentMsgs = append(sentMsgs, model.BroadcastMessage{
+								UserId:    uId,
+								MessageId: sentM.MessageId,
+							})
+							sentMsgsMu.Unlock()
+						}
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	// Progress reporter loop
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	// Wait group to know when workers finish
+	workersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(workersDone)
+	}()
+
+	isCancelled := false
+	isStopped := false
+
+	for {
+		select {
+		case <-workersDone:
+			goto finish
+		case <-_app.Ctx.Done():
+			isStopped = true
+			cancelWorkers()
+			goto finish
+		case <-ticker.C:
+			// Fetch broadcast from DB to check for admin cancellation
+			currB, err := _app.DB.GetBroadcast(bId)
+			if err == nil && currB.Status == "cancelled" {
+				isCancelled = true
+				cancelWorkers()
+				goto finish
+			}
+
+			// Get progress snapshot
+			mu.Lock()
+			snapshot := *progress
+			mu.Unlock()
+
+			// Update progress in admin chat
+			percent := float64(snapshot.success+snapshot.failed) / float64(snapshot.total)
+			pBar := drawProgressBar(percent)
+
+			processed := snapshot.success + snapshot.failed
+			var etaStr string
+			if processed > 0 {
+				elapsed := time.Since(startTime)
+				speed := float64(processed) / elapsed.Seconds()
+				if speed > 0 {
+					remaining := snapshot.total - processed
+					eta := time.Duration(float64(remaining)/speed) * time.Second
+					etaStr = formatDuration(eta)
+				} else {
+					etaStr = "Calculating..."
+				}
+			} else {
+				etaStr = "Calculating..."
+			}
+
+			msgText := fmt.Sprintf(`<b>📢 Broadcast Progress [%s]</b>
+%d / %d processed (%d%%)
+
+<blockquote><b>Success:</b> <code>%d</code>
+<b>Failed:</b> <code>%d</code>
+   • <i>Blocked:</i> <code>%d</code>
+   • <i>Deleted:</i> <code>%d</code>
+   • <i>Other:</i> <code>%d</code></blockquote>
+
+<b>⏱️ ETA:</b> <code>%s</code>`, 
+				pBar, processed, snapshot.total, int(percent*100),
+				snapshot.success, snapshot.failed, snapshot.blocked, snapshot.deleted, snapshot.otherErr,
+				etaStr)
+
 			bot.EditMessageText(
-				p.BuildMessage().WriteLn("<code>Broadcast Cancelled Due to Application Stopping</code>").String(),
-				&gotgbot.EditMessageTextOpts{
-					ChatId:    adminChatId,
-					MessageId: progressMessageId,
-					ParseMode: gotgbot.ParseModeHTML,
-				},
-			)
-			break
-		}
-
-		// Double-check if the broadcast was cancelled by admin dynamically
-		if currB, err := _app.DB.GetBroadcast(bId); err == nil && currB.Status == "cancelled" {
-			var kb [][]gotgbot.InlineKeyboardButton
-			if p.success > 0 {
-				kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + bId}})
-			}
-			kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}})
-
-			bot.EditMessageText(
-				p.BuildMessage().WriteLn("<code>Broadcast Cancelled By Admin ❌</code>").String(),
-				&gotgbot.EditMessageTextOpts{
-					ChatId:      adminChatId,
-					MessageId:   progressMessageId,
-					ParseMode:   gotgbot.ParseModeHTML,
-					ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
-				},
-			)
-			return
-		}
-
-		var success bool
-		var lastErr error
-		var sentM *gotgbot.Message
-
-		userOpts := *opts
-		// Antiban / anti-spam: append dynamic zero-width space characters to randomize message hash
-		paddingCount := int((time.Now().UnixNano() / 1000) % 10) + 1
-		userOpts.Text = b.Text + strings.Repeat("\u200B", paddingCount)
-
-		for attempt := 0; attempt < 3; attempt++ {
-			limiter.Wait()
-
-			// Dynamic organic jitter (0-50ms) to bypass robotic pattern matching
-			time.Sleep(time.Millisecond * time.Duration(time.Now().UnixNano()%50))
-
-			sentM, lastErr = method(bot, uId, &userOpts)
-			if lastErr == nil {
-				success = true
-				break
-			}
-
-			if floodErr, ok := functions.AsFloodWait(lastErr); ok {
-				_app.Log.Info("broadcast: flood wait detected, sleeping", zap.Int64("duration_seconds", floodErr.Duration), zap.Int64("user_id", uId))
-				floodErr.Wait()
-				attempt--
-				continue
-			}
-
-			if functions.IsChatNotFoundErr(lastErr) || strings.Contains(lastErr.Error(), "deactivated") {
-				break
-			}
-
-			time.Sleep(time.Second * time.Duration(attempt+1))
-		}
-
-		if !success {
-			p.failed++
-			errStr := lastErr.Error()
-			switch {
-			case strings.Contains(errStr, "blocked"):
-				_app.DB.DeleteUser(uId)
-				p.blocked++
-			case strings.Contains(errStr, "deactivated") || strings.Contains(errStr, "deleted"):
-				_app.DB.DeleteUser(uId)
-				p.deleted++
-			case strings.Contains(errStr, "chat not found"):
-				_app.DB.DeleteUser(uId)
-				p.blocked++
-			default:
-				p.otherErr++
-				_app.Log.Info("broadcast: failed to send", zap.Int64("chat_id", uId), zap.Error(lastErr))
-			}
-		} else {
-			p.success++
-			if sentM != nil {
-				sentMsgs = append(sentMsgs, model.BroadcastMessage{
-					UserId:    uId,
-					MessageId: sentM.MessageId,
-				})
-			}
-		}
-
-		// Update progress in chat every 50 users
-		if (p.success+p.failed)%50 == 0 || (p.success+p.failed) == p.total {
-			bot.EditMessageText(
-				p.BuildMessage().String(),
+				msgText,
 				&gotgbot.EditMessageTextOpts{
 					ChatId:    adminChatId,
 					MessageId: progressMessageId,
@@ -355,37 +516,88 @@ func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessa
 					},
 				},
 			)
-			// Save progressive stats to database
+
+			// Save stats to DB
+			sentMsgsMu.Lock()
+			msgsCopy := make([]model.BroadcastMessage, len(sentMsgs))
+			copy(msgsCopy, sentMsgs)
+			sentMsgsMu.Unlock()
+
 			_app.DB.UpdateBroadcast(bId, map[string]interface{}{
-				"success":       p.success,
-				"failed":        p.failed,
-				"blocked":       p.blocked,
-				"deleted":       p.deleted,
-				"other_err":     p.otherErr,
-				"sent_messages": sentMsgs,
+				"success":       snapshot.success,
+				"failed":        snapshot.failed,
+				"blocked":       snapshot.blocked,
+				"deleted":       snapshot.deleted,
+				"other_err":     snapshot.otherErr,
+				"sent_messages": msgsCopy,
 			})
 		}
 	}
 
-	// Finished!
+finish:
+	// Wait for workers to cleanly shutdown if cancelled/stopped
+	<-workersDone
+
+	// Final status update
+	status := "completed"
+	if isCancelled {
+		status = "cancelled"
+	} else if isStopped {
+		status = "stopped"
+	}
+
+	mu.Lock()
+	finalProgress := *progress
+	mu.Unlock()
+
+	sentMsgsMu.Lock()
+	finalSentMsgs := sentMsgs
+	sentMsgsMu.Unlock()
+
 	_app.DB.UpdateBroadcast(bId, map[string]interface{}{
-		"status":        "completed",
-		"success":       p.success,
-		"failed":        p.failed,
-		"blocked":       p.blocked,
-		"deleted":       p.deleted,
-		"other_err":     p.otherErr,
-		"sent_messages": sentMsgs,
+		"status":        status,
+		"success":       finalProgress.success,
+		"failed":        finalProgress.failed,
+		"blocked":       finalProgress.blocked,
+		"deleted":       finalProgress.deleted,
+		"other_err":     finalProgress.otherErr,
+		"sent_messages": finalSentMsgs,
 	})
 
 	var kb [][]gotgbot.InlineKeyboardButton
-	if p.success > 0 {
+	if finalProgress.success > 0 {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + bId}})
 	}
 	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}})
 
+	var finalStatusMsg string
+	if isCancelled {
+		finalStatusMsg = "<b>Broadcast Cancelled By Admin ❌</b>"
+	} else if isStopped {
+		finalStatusMsg = "<b>Broadcast Stopped Due to Application Stop ⚠️</b>"
+	} else {
+		finalStatusMsg = "<b>Broadcast Completed Successfully ✅</b>"
+	}
+
+	percent := float64(finalProgress.success+finalProgress.failed) / float64(finalProgress.total)
+	pBar := drawProgressBar(percent)
+
+	msgText := fmt.Sprintf(`<b>📢 Broadcast Finished [%s]</b>
+%d / %d processed (%d%%)
+
+<blockquote><b>Success:</b> <code>%d</code>
+<b>Failed:</b> <code>%d</code>
+   • <i>Blocked:</i> <code>%d</code>
+   • <i>Deleted:</i> <code>%d</code>
+   • <i>Other:</i> <code>%d</code></blockquote>
+
+%s`, 
+		pBar, finalProgress.success+finalProgress.failed, finalProgress.total, int(percent*100),
+		finalProgress.success, finalProgress.failed, finalProgress.blocked, finalProgress.deleted, finalProgress.otherErr,
+		finalStatusMsg)
+
 	bot.EditMessageText(
-		p.BuildMessage().WriteLn("<code>Broadcast Completed Successfully ✅</code>").String(),
+		msgText,
 		&gotgbot.EditMessageTextOpts{
 			ChatId:      adminChatId,
 			MessageId:   progressMessageId,

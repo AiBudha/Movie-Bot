@@ -94,3 +94,9 @@ func (c *Client) IncrementGroupSearchCount(chatID int64) error {
 	_, err := c.groupCollection.UpdateOne(c.ctx, filter, update, opts)
 	return err
 }
+
+// DeleteGroupConfig deletes configuration settings for a given group chat.
+func (c *Client) DeleteGroupConfig(chatID int64) error {
+	_, err := c.groupCollection.DeleteOne(c.ctx, bson.M{"_id": chatID})
+	return err
+}

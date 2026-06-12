@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"autofilterbot/internal/autofilter"
+	"autofilterbot/internal/model"
 	"autofilterbot/pkg/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -432,4 +433,196 @@ func PostCallbackHandler(bot *gotgbot.Bot, ctx *ext.Context) error {
 	// Change the original preview message to show it was posted
 	c.Message.EditText(bot, "✅ <b>Successfully posted to channel!</b>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
 	return nil
+}
+
+// AutoPostNewRelease checks if the newly indexed file is a new release (movie or series from 2025/2026),
+// checks for duplicates, formats a premium channel post (with poster, specs, and inline search buttons),
+// and automatically posts it to the results channel.
+func AutoPostNewRelease(bot *gotgbot.Bot, f *model.File) {
+	// 1. Ensure ResultsChannelID is set
+	channelID := _app.Config.GetResultsChannelID()
+	if channelID == 0 {
+		return
+	}
+
+	// 2. Extract base title and year from the filename
+	baseTitle := autofilter.ExtractBaseTitle(f.FileName)
+	if baseTitle == "" {
+		return
+	}
+	year := autofilter.ExtractYear(f.FileName)
+
+	// Only auto-post new releases (e.g. year is 2025 or 2026, or current year 2026)
+	if year == "" {
+		_app.Log.Debug("AutoPostNewRelease: no year found, skipping auto-post", zap.String("file", f.FileName))
+		return
+	}
+	// Verify it's a new release
+	var parsedYear int
+	_, _ = fmt.Sscanf(year, "%d", &parsedYear)
+	if parsedYear < 2025 {
+		_app.Log.Debug("AutoPostNewRelease: old release year, skipping auto-post", zap.String("file", f.FileName), zap.Int("year", parsedYear))
+		return
+	}
+
+	// 3. Prevent duplicate posts: check if already posted
+	posted, err := _app.DB.IsMoviePosted(baseTitle, year)
+	if err != nil {
+		_app.Log.Error("AutoPostNewRelease: database check for duplicates failed", zap.Error(err))
+		return
+	}
+	if posted {
+		_app.Log.Debug("AutoPostNewRelease: movie already posted, skipping duplicate", zap.String("title", baseTitle), zap.String("year", year))
+		return
+	}
+
+	// 4. Fetch all matching files from DB to build a complete post (all qualities/languages)
+	searchQuery := baseTitle
+	if year != "" {
+		searchQuery = baseTitle + " " + year
+	}
+	cursor, err := _app.DB.SearchFiles(searchQuery)
+	if err != nil {
+		_app.Log.Warn("AutoPostNewRelease: database search failed for post", zap.String("query", searchQuery), zap.Error(err))
+		return
+	}
+
+	filesFromDb, err := autofilter.FilesFromCursor(context.Background(), cursor, _app.Config)
+	if err != nil {
+		_app.Log.Warn("AutoPostNewRelease: failed to read files from cursor", zap.Error(err))
+		return
+	}
+
+	var allFiles []autofilter.File
+	for _, page := range filesFromDb {
+		allFiles = append(allFiles, page...)
+	}
+
+	if len(allFiles) == 0 {
+		return
+	}
+
+	// Double check to make sure we don't race and write duplicate post records
+	// Mark as posted first to avoid race conditions with multiple files of the same movie arriving concurrently.
+	err = _app.DB.MarkMoviePosted(baseTitle, year)
+	if err != nil {
+		_app.Log.Error("AutoPostNewRelease: failed to mark movie as posted", zap.Error(err))
+		return
+	}
+
+	searchType := autofilter.DetectType(allFiles)
+	isSeries := searchType == "series"
+	langs := autofilter.DetectLanguages(allFiles)
+	langStr := "Unknown"
+	if len(langs) > 0 {
+		langStr = strings.Join(langs, ", ")
+	}
+
+	bestQualityLevel := 0
+	bestQualityStr := "Unknown"
+	for _, fileItem := range allFiles {
+		qLvl := autofilter.QualityLevel(fileItem.FileName)
+		if qLvl > bestQualityLevel {
+			bestQualityLevel = qLvl
+			fileNameLower := strings.ToLower(fileItem.FileName)
+			if strings.Contains(fileNameLower, "2160p") || strings.Contains(fileNameLower, "4k") {
+				bestQualityStr = "4K 2160p"
+			} else if strings.Contains(fileNameLower, "1080p") {
+				bestQualityStr = "1080p"
+			} else if strings.Contains(fileNameLower, "720p") {
+				bestQualityStr = "720p"
+			} else if strings.Contains(fileNameLower, "480p") {
+				bestQualityStr = "480p"
+			} else if bestQualityStr == "Unknown" {
+				bestQualityStr = "HD"
+			}
+		}
+	}
+
+	posterUrl := autofilter.GetPosterUrlWithType(searchQuery, isSeries)
+
+	// Format Premium Caption
+	caption := fmt.Sprintf("✅ <b>%s (%s)</b> #%s\n\n", html.EscapeString(baseTitle), year, strings.ToUpper(searchType))
+	caption += fmt.Sprintf("🎙️ <b>Language:</b> %s\n", html.EscapeString(langStr))
+	caption += fmt.Sprintf("🎥 <b>Quality:</b> %s\n", bestQualityStr)
+	caption += fmt.Sprintf("📁 <b>Files Available:</b> %d\n", len(allFiles))
+
+	var keyboard [][]gotgbot.InlineKeyboardButton
+	botUsername := bot.User.Username
+	encodeQueryFunc := func(q string) string {
+		return base64.RawURLEncoding.EncodeToString([]byte("s" + q))
+	}
+
+	if isSeries {
+		groups := autofilter.GroupBySeason(allFiles)
+		var seasons []int
+		for s := range groups {
+			seasons = append(seasons, s)
+		}
+		for i := 0; i < len(seasons); i++ {
+			for j := i + 1; j < len(seasons); j++ {
+				if seasons[i] > seasons[j] {
+					seasons[i], seasons[j] = seasons[j], seasons[i]
+				}
+			}
+		}
+		for _, s := range seasons {
+			files := groups[s]
+			eps := make(map[int]bool)
+			for _, fileItem := range files {
+				_, e := autofilter.ExtractSeriesMetadata(fileItem.FileName)
+				if e > 0 {
+					eps[e] = true
+				}
+			}
+			btnText := fmt.Sprintf("📀 Season %d (%d eps \u00B7 %d files)", s, len(eps), len(files))
+			searchStr := fmt.Sprintf("%s S%02d", baseTitle, s)
+			encodedQ := encodeQueryFunc(searchStr)
+			urlStr := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, encodedQ)
+			keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{Text: btnText, Url: urlStr}})
+		}
+	} else {
+		var langRow []gotgbot.InlineKeyboardButton
+		for _, l := range langs {
+			encodedQ := encodeQueryFunc(baseTitle + " " + year + " " + l)
+			urlStr := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, encodedQ)
+			langRow = append(langRow, gotgbot.InlineKeyboardButton{Text: l, Url: urlStr})
+			if len(langRow) == 2 {
+				keyboard = append(keyboard, langRow)
+				langRow = nil
+			}
+		}
+		if len(langRow) > 0 {
+			keyboard = append(keyboard, langRow)
+		}
+		if len(langs) == 0 {
+			encodedQ := encodeQueryFunc(baseTitle + " " + year)
+			urlStr := fmt.Sprintf("https://t.me/%s?start=%s", botUsername, encodedQ)
+			keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{Text: "🔍 Search Movie", Url: urlStr}})
+		}
+	}
+
+	shareText := fmt.Sprintf("Check out %s (%s) on Telegram!", baseTitle, year)
+	shareUrl := fmt.Sprintf("https://t.me/share/url?url=https://t.me/%s&text=%s", botUsername, url.QueryEscape(shareText))
+	keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{Text: "🎁 Share to Friends 🚀", Url: shareUrl}})
+
+	var errSend error
+	if posterUrl != "" {
+		_, errSend = bot.SendPhoto(channelID, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
+			Caption:     caption,
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+	} else {
+		_, errSend = bot.SendMessage(channelID, caption, &gotgbot.SendMessageOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+		})
+	}
+
+	if errSend != nil {
+		_app.Log.Warn("AutoPostNewRelease: failed to send to channel", zap.Error(errSend))
+	} else {
+		_app.Log.Info("AutoPostNewRelease: successfully auto-posted new release to channel", zap.String("title", baseTitle), zap.String("year", year))
+	}
 }

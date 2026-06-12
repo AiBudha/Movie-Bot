@@ -32,32 +32,29 @@ func cleanCompareString(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func levenshtein(s, t string) int {
-	d := make([][]int, len(s)+1)
-	for i := range d {
-		d[i] = make([]int, len(t)+1)
-		d[i][0] = i
-	}
-	for j := range d[0] {
-		d[0][j] = j
-	}
-	for i := 1; i <= len(s); i++ {
-		for j := 1; j <= len(t); j++ {
-			if s[i-1] == t[j-1] {
-				d[i][j] = d[i-1][j-1]
-			} else {
-				min := d[i-1][j]
-				if d[i][j-1] < min {
-					min = d[i][j-1]
-				}
-				if d[i-1][j-1] < min {
-					min = d[i-1][j-1]
-				}
-				d[i][j] = min + 1
-			}
+func SearchFilesCached(query string) ([]autofilter.Files, error) {
+	if _app.Cache != nil && _app.Cache.SearchCache != nil {
+		if res, found := _app.Cache.SearchCache.Get(query); found {
+			return res, nil
 		}
 	}
-	return d[len(s)][len(t)]
+
+	dbCursor, err := _app.DB.SearchFiles(query)
+	if err != nil {
+		return nil, err
+	}
+
+	cursorFiles, err := autofilter.FilesFromCursor(context.Background(), dbCursor, _app.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result if we got any
+	if len(cursorFiles) > 0 && _app.Cache != nil && _app.Cache.SearchCache != nil {
+		_app.Cache.SearchCache.Set(query, cursorFiles)
+	}
+
+	return cursorFiles, nil
 }
 
 func parseSuggestion(sug string) (string, string) {
@@ -289,23 +286,11 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 
 	var files []autofilter.Files
 	for attempt := 1; attempt <= 2; attempt++ {
-		dbCursor, dbErr := _app.DB.SearchFiles(query)
+		cursorFiles, dbErr := SearchFilesCached(query)
 		if dbErr != nil {
 			err = dbErr
 			_app.Log.Warn("autofilter: search files failed", zap.Error(err))
 			return bot.SendMessage(inputMessage.GetChat().Id, "<i>I'm Having Some Database Issues Right Now 😓\nPlease Try Again Later!</i>", &gotgbot.SendMessageOpts{
-				ReplyParameters: &gotgbot.ReplyParameters{
-					MessageId: inputMessage.GetMessageId(),
-				},
-				ParseMode: gotgbot.ParseModeHTML,
-			})
-		}
-
-		cursorFiles, filesErr := autofilter.FilesFromCursor(context.Background(), dbCursor, _app.Config)
-		if filesErr != nil {
-			err = filesErr
-			_app.Log.Warn("autofilter: files from cursor failed", zap.Error(err))
-			return bot.SendMessage(inputMessage.GetChat().Id, "<i>Processing Results Failed 🤖</i>", &gotgbot.SendMessageOpts{
 				ReplyParameters: &gotgbot.ReplyParameters{
 					MessageId: inputMessage.GetMessageId(),
 				},
@@ -344,7 +329,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 
 			qLen := len(qClean)
 			if qLen >= 4 {
-				dist := levenshtein(qClean, sClean)
+				dist := functions.Levenshtein(qClean, sClean)
 				maxDist := 2
 				if qLen < 6 {
 					maxDist = 1
@@ -882,15 +867,9 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	cursor, err := _app.DB.SearchFiles(query)
+	files, err := SearchFilesCached(query)
 	if err != nil {
 		_app.Log.Warn("inline: search files failed", zap.Error(err), zap.String("query", query))
-		return nil
-	}
-
-	files, err := autofilter.FilesFromCursor(context.Background(), cursor, _app.Config)
-	if err != nil {
-		_app.Log.Warn("inline: files from cursor failed", zap.Error(err))
 		return nil
 	}
 

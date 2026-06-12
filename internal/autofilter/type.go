@@ -11,10 +11,25 @@ import (
 
 var (
 	seasonEpisodeRegex = regexp.MustCompile(`(?i)\bs(\d+)\s?e(\d+)\b|\bseason\s?(\d+)\s?episode\s?(\d+)\b|\b(\d+)x(\d+)\b`)
-	qualityRegex       = regexp.MustCompile(`(?i)(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1|\b(?:color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b)`)
+	qualityRegex       = regexp.MustCompile(`(?i)\b(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1|color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b`)
 	seasonOnlyRegex    = regexp.MustCompile(`(?i)\bseason\s?(\d+)\b|\bs(\d+)\b`)
 	episodeOnlyRegex   = regexp.MustCompile(`(?i)\bepisode\s?(\d+)\b|\bep[._-]?\s?(\d+)\b|\be(\d{1,4})\b`)
 	yearRegex          = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+
+	quality2160pRegex  = regexp.MustCompile(`(?i)\b(2160p|4k)\b`)
+	quality1080pRegex  = regexp.MustCompile(`(?i)\b1080p\b`)
+	quality720pRegex   = regexp.MustCompile(`(?i)\b720p\b`)
+	quality480pRegex   = regexp.MustCompile(`(?i)\b480p\b`)
+	qualityBlurayRegex = regexp.MustCompile(`(?i)\bbluray\b`)
+	qualityWebRegex    = regexp.MustCompile(`(?i)\b(hdtv|web|web-dl|webrip)\b`)
+	qualityHdripRegex  = regexp.MustCompile(`(?i)\bhdrip\b`)
+	qualityDvdripRegex = regexp.MustCompile(`(?i)\bdvdrip\b`)
+
+	qualityTcRegex     = regexp.MustCompile(`(?i)\b(hdtc|tc|telecine)\b`)
+	qualityCamRegex    = regexp.MustCompile(`(?i)\b(camrip|cam|hdcam|ts|telesync|screener|dvdscr|scr|hqcam|hq-cam|hc)\b`)
+	qualityPredvdRegex = regexp.MustCompile(`(?i)\b(predvd|p-dvd|pre-dvd)\b`)
+
+	garbageRegex       = regexp.MustCompile(`(?i)\b(sample|trailer|camrip|predvd|hdcam|telecine|hdtc|p-dvd|telesync|screener|dvdscr|scr|pre-dvd|hq-cam|hqcam|hc|tc|ts|cam)\b`)
 )
 
 type MovieMetadata struct {
@@ -115,29 +130,27 @@ func ExtractSeriesMetadata(name string) (int, int) {
 func QualityLevel(name string) int {
 	lower := strings.ToLower(name)
 	switch {
-	case strings.Contains(lower, "2160p") || strings.Contains(lower, "4k"):
+	case quality2160pRegex.MatchString(lower):
 		return 100
-	case strings.Contains(lower, "1080p"):
+	case quality1080pRegex.MatchString(lower):
 		return 80
-	case strings.Contains(lower, "bluray"):
+	case qualityBlurayRegex.MatchString(lower):
 		return 75
-	case strings.Contains(lower, "720p"):
+	case quality720pRegex.MatchString(lower):
 		return 60
-	case strings.Contains(lower, "hdtv") || strings.Contains(lower, "web"):
+	case qualityWebRegex.MatchString(lower):
 		return 50
-	case strings.Contains(lower, "480p"):
+	case quality480pRegex.MatchString(lower):
 		return 40
-	case strings.Contains(lower, "hdrip"):
+	case qualityHdripRegex.MatchString(lower):
 		return 35
-	case strings.Contains(lower, "webrip"):
-		return 30
-	case strings.Contains(lower, "dvdrip"):
+	case qualityDvdripRegex.MatchString(lower):
 		return 25
-	case strings.Contains(lower, "hdtc") || strings.Contains(lower, "tc") || strings.Contains(lower, "telecine"):
+	case qualityTcRegex.MatchString(lower):
 		return 15
-	case strings.Contains(lower, "camrip") || strings.Contains(lower, "cam") || strings.Contains(lower, "hdcam") || strings.Contains(lower, "ts"):
+	case qualityCamRegex.MatchString(lower):
 		return 10
-	case strings.Contains(lower, "predvd") || strings.Contains(lower, "p-dvd"):
+	case qualityPredvdRegex.MatchString(lower):
 		return 5
 	default:
 		return 0
@@ -201,10 +214,10 @@ func ExtractMovieLabel(name string) string {
 // IsGarbageFile returns true for samples, trailers, etc.
 func IsGarbageFile(name string) bool {
 	lower := strings.ToLower(name)
-	garbage := []string{"sample", "trailer", ".srt", ".txt", "nfo", "idx", "sub", "camrip", "predvd", "hdcam", "telecine", "hdtc", "p-dvd"}
-	return slices.ContainsFunc(garbage, func(g string) bool {
-		return strings.Contains(lower, g)
-	})
+	if strings.HasSuffix(lower, ".srt") || strings.HasSuffix(lower, ".txt") || strings.HasSuffix(lower, ".nfo") || strings.HasSuffix(lower, ".idx") || strings.HasSuffix(lower, ".sub") {
+		return true
+	}
+	return garbageRegex.MatchString(lower)
 }
 var languageRegexes = map[string]*regexp.Regexp{
 	"Hindi":     regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(hindi|hin)(?:[^a-zA-Z0-9]|$)`),

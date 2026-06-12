@@ -24,7 +24,8 @@ type User struct {
 	FsubMessageID int64 `bson:"fsub_message_id"`
 	// LastSearchAt is the time of the last search performed by the user.
 	LastSearchAt int64 `json:"last_search_at,omitempty" bson:"last_search_at,omitempty"`
-	ConnectedChatID int64 `json:"connected_chat_id,omitempty" bson:"connected_chat_id,omitempty"`
+	ConnectedChatID  int64   `json:"connected_chat_id,omitempty" bson:"connected_chat_id,omitempty"`
+	ConnectedChatIDs []int64 `json:"connected_chat_ids,omitempty" bson:"connected_chat_ids,omitempty"`
 }
 
 // FsubStats contains analytics for a single fsub channel.

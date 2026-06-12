@@ -25,19 +25,19 @@ func AdminPanel(bot *gotgbot.Bot, ctx *ext.Context) error {
 			// Row 3: File Syncing & Indexing
 			{{Text: "Index 🗂️", CallbackData: "admin:index"}, {Text: "Batch 📦", CallbackData: "admin:batch"}, {Text: "GenLink 🔗", CallbackData: "admin:genlink"}},
 			// Row 4: Delete Operations
-			{{Text: "Delete 🗑️", CallbackData: "admin:delete"}, {Text: "Delete All 🚯", CallbackData: "admin:deleteall"}, {Text: "Clean Quality 🧹", CallbackData: "admin:clean"}},
-			// Row 5: Skipping, FSub Setup & Logs
-			{{Text: "FSub Config 📢", CallbackData: "admin:fsub"}, {Text: "Set Skip ⏭️", CallbackData: "admin:setskip"}, {Text: "Logs 📄", CallbackData: "admin:logs"}},
+			{{Text: "Delete 🗑️", CallbackData: "admin:delete"}, {Text: "Delete All 🚯", CallbackData: "admin:deleteall"}, {Text: "Clean Quality 🧹", CallbackData: "admin:clean"}, {Text: "Clean Dups 👥", CallbackData: "admin:cleandups"}},
+			// Row 5: Skipping & Logs
+			{{Text: "Set Skip ⏭️", CallbackData: "admin:setskip"}, {Text: "Logs 📄", CallbackData: "admin:logs"}},
 			
 			// === CONFIG SETTINGS ===
 			// Row 6: Size Button, Poster, Results Channel
 			{{Text: "Size Button 📏", CallbackData: "config:sizebtn"}, {Text: "Poster 🖼️", CallbackData: "config:poster"}, {Text: "Results Chan 📢", CallbackData: "config:reschan"}},
-			// Row 7: Auto Delete, File AutoDelete
-			{{Text: "Auto Delete ⏱️", CallbackData: "config:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:filedel"}},
-			// Row 8: Monitored Chans, Force Sub Page
-			{{Text: "Monitored Chans 🎧", CallbackData: "config:moniterd"}, {Text: "Force Sub Page 🔒", CallbackData: "config:fsub"}},
-			// Row 9: Group Defaults, Database Config
-			{{Text: "Group Defaults 👥", CallbackData: "config:group"}, {Text: "Database Config 📂", CallbackData: "config:db"}},
+			// Row 7: Auto Delete, File AutoDelete, Monitored Chans
+			{{Text: "Auto Delete ⏱️", CallbackData: "config:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:filedel"}, {Text: "Monitored Chans 🎧", CallbackData: "config:moniterd"}},
+			// Row 8: Force Sub 🔒, Group Defaults, Database Config
+			{{Text: "Force Sub 🔒", CallbackData: "config:fsub"}, {Text: "Group Defaults 👥", CallbackData: "config:group"}, {Text: "Database 📂", CallbackData: "config:db"}},
+			// Row 9: Result Button, Footer Buttons
+			{{Text: "Result Button 🔗", CallbackData: "config:resbtn"}, {Text: "Footer Buttons 🎛️", CallbackData: "config:footer"}},
 			
 			// Row 10: Close
 			{{Text: "Close ❌", CallbackData: "admin:close"}},
@@ -121,6 +121,8 @@ func AdminCallbackHandler(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return DeleteAllFiles(bot, ctx)
 	case "clean":
 		return CleanQuality(bot, ctx)
+	case "cleandups":
+		return CleanDuplicatesCommand(bot, ctx)
 	case "fsub":
 		return SetFsub(bot, ctx)
 	case "setskip":

@@ -42,6 +42,7 @@ type Client struct {
 	ottSubscriberCollection *mongo.Collection
 	// ottSentItemsCollection stores OTT release items already sent.
 	ottSentItemsCollection *mongo.Collection
+	autoPostsCollection    *mongo.Collection
 
 	botId  int64
 	ctx    context.Context
@@ -115,9 +116,6 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 			Keys: bson.D{{Key: "file_name", Value: "text"}, {Key: "time", Value: 1}},
 		})
 		coll.Indexes().CreateOne(context.TODO(), mongo.IndexModel{
-			Keys: bson.D{{Key: "file_id", Value: 1}},
-		})
-		coll.Indexes().CreateOne(context.TODO(), mongo.IndexModel{
 			Keys: bson.D{{Key: "file_name", Value: 1}, {Key: "file_size", Value: 1}},
 		})
 	}
@@ -139,6 +137,7 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 		warningCollection:          dataBase.Collection("Warnings"),
 		ottSubscriberCollection:    dataBase.Collection(database.CollectionNameOTTSubscribers),
 		ottSentItemsCollection:    dataBase.Collection(database.CollectionNameOTTSentItems),
+		autoPostsCollection:       dataBase.Collection(database.CollectionNameAutoPosts),
 	}
 
 	// Create unique index for subscribers chat_id
@@ -159,6 +158,25 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 		Keys:    bson.D{{Key: "sent_at", Value: 1}},
 		Options: options.Index().SetExpireAfterSeconds(ttlSecs),
 	})
+
+	// Clean duplicates and apply unique constraint on file_id asynchronously
+	go func() {
+		client.CleanDuplicates(ctx, log)
+
+		log.Info("mongo: applying unique index constraint on file_id...")
+		for _, coll := range fileCollections {
+			_, _ = coll.Indexes().DropOne(ctx, "file_id_1")
+			_, err := coll.Indexes().CreateOne(ctx, mongo.IndexModel{
+				Keys:    bson.D{{Key: "file_id", Value: 1}},
+				Options: options.Index().SetUnique(true),
+			})
+			if err != nil {
+				log.Error("mongo: failed to create unique index on file_id", zap.String("collection", coll.Name()), zap.Error(err))
+			} else {
+				log.Info("mongo: unique index on file_id applied successfully", zap.String("collection", coll.Name()))
+			}
+		}
+	}()
 
 	return client, nil
 }

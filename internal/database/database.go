@@ -18,6 +18,7 @@ const (
 	CollectionNameIndexedChannels = "IndexedChannels"
 	CollectionNameOTTSubscribers  = "subscribers"
 	CollectionNameOTTSentItems    = "sent_items"
+	CollectionNameAutoPosts       = "AutoPosts"
 
 	DefaultDatabaseName = "AutoFilterBot"
 )
@@ -81,6 +82,7 @@ type Database interface {
 	SaveGroup(id int64) error
 	GetGroupConfig(chatID int64) (*model.GroupConfig, error)
 	SaveGroupConfig(cfg *model.GroupConfig) error
+	DeleteGroupConfig(chatID int64) error
 	GetUserWarning(chatID, userID int64) (int, error)
 	AddUserWarning(chatID, userID int64) (int, error)
 	ResetUserWarnings(chatID, userID int64) error
@@ -88,6 +90,12 @@ type Database interface {
 	IncrementGroupSearchCount(chatID int64) error
 	SetUserConnection(userId int64, chatID int64) error
 	GetUserConnection(userId int64) (int64, error)
+	AddUserConnection(userId int64, chatID int64) error
+	RemoveUserConnection(userId int64, chatID int64) error
+	GetUserConnections(userId int64) ([]int64, error)
+
+	IsMoviePosted(title string, year string) (bool, error)
+	MarkMoviePosted(title string, year string) error
 
 	// GetConfig fetches the bot configs from the database.
 	GetConfig(botId int64) (*config.Config, error)

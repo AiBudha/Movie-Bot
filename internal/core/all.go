@@ -193,14 +193,19 @@ func FsubJoined(bot *gotgbot.Bot, ctx *ext.Context) error {
 	userId := c.From.Id
 
 	channels := _app.Config.GetFsubChannels()
-	missing := fsub.GetMissingChannels(bot, _app.GetDB(), userId, channels)
+	missing := fsub.GetMissingChannels(bot, _app.GetDB(), _app.Log, userId, channels)
 
 	if len(missing) > 0 {
 		_, err := c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ You haven't joined all channels yet or your request is still pending!",
 			ShowAlert: true,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		// Dynamically edit the existing prompt to show the next missing channel in sequence
+		_, _ = fsub.CheckFsub(_app, bot, ctx)
+		return nil
 	}
 
 	_, _ = c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{

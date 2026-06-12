@@ -29,7 +29,7 @@ func HandleJoinRequest(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		channels := _app.Config.GetFsubChannels()
-		missing := fsub.GetMissingChannels(bot, _app.GetDB(), userId, channels)
+		missing := fsub.GetMissingChannels(bot, _app.GetDB(), _app.Log, userId, channels)
 
 		if len(missing) > 0 {
 			// Still missing some channels, update the prompt to the next one
@@ -75,6 +75,64 @@ func HandleChatMember(bot *gotgbot.Bot, ctx *ext.Context) error {
 	newStatus := update.NewChatMember.GetStatus()
 	userId := update.NewChatMember.GetUser().Id
 
+	// If the update is about the bot itself
+	if userId == bot.Id {
+		if update.Chat.Type == "group" || update.Chat.Type == "supergroup" {
+			if newStatus == "administrator" || newStatus == "member" {
+				// Bot was added to the group
+				_app.Log.Info("Bot added to group", zap.String("title", update.Chat.Title), zap.Int64("chat_id", update.Chat.Id))
+				_, err := _app.DB.GetGroupConfig(update.Chat.Id)
+				if err != nil {
+					_app.Log.Error("HandleChatMember: failed to save group config on addition", zap.Error(err))
+				}
+
+				// Alert in LogChannel
+				if _app.LogChannel != 0 {
+					var actorMention string
+					if update.From.Id != 0 {
+						actorMention = fmt.Sprintf("<a href=\"tg://user?id=%d\">%s</a>", update.From.Id, update.From.FirstName)
+					} else {
+						actorMention = "Unknown User"
+					}
+					alertMsg := fmt.Sprintf(
+						"➕ <b>BOT ADDED TO GROUP</b> ➕\n\n"+
+							"📍 <b>Group:</b> %s\n"+
+							"🆔 <b>Group ID:</b> <code>%d</code>\n"+
+							"👤 <b>Added By:</b> %s",
+						update.Chat.Title, update.Chat.Id, actorMention,
+					)
+					_, _ = bot.SendMessage(_app.LogChannel, alertMsg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				}
+			} else if newStatus == "left" || newStatus == "kicked" {
+				// Bot was removed from the group
+				_app.Log.Info("Bot removed from group", zap.String("title", update.Chat.Title), zap.Int64("chat_id", update.Chat.Id))
+				err := _app.DB.DeleteGroupConfig(update.Chat.Id)
+				if err != nil {
+					_app.Log.Error("HandleChatMember: failed to delete group config on removal", zap.Error(err))
+				}
+
+				// Alert in LogChannel
+				if _app.LogChannel != 0 {
+					var actorMention string
+					if update.From.Id != 0 {
+						actorMention = fmt.Sprintf("<a href=\"tg://user?id=%d\">%s</a>", update.From.Id, update.From.FirstName)
+					} else {
+						actorMention = "Unknown User"
+					}
+					alertMsg := fmt.Sprintf(
+						"➖ <b>BOT REMOVED FROM GROUP</b> ➖\n\n"+
+							"📍 <b>Group:</b> %s\n"+
+							"🆔 <b>Group ID:</b> <code>%d</code>\n"+
+							"👤 <b>Action By:</b> %s",
+						update.Chat.Title, update.Chat.Id, actorMention,
+					)
+					_, _ = bot.SendMessage(_app.LogChannel, alertMsg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				}
+			}
+		}
+		return nil
+	}
+
 	// If they became a member, save to JoinRequests collection as persistent proof of membership
 	if newStatus == "member" || newStatus == "administrator" || newStatus == "creator" {
 		fsub.SetMembershipCache(userId, update.Chat.Id, true)
@@ -90,7 +148,7 @@ func HandleChatMember(bot *gotgbot.Bot, ctx *ext.Context) error {
 			}
 
 			channels := _app.Config.GetFsubChannels()
-			missing := fsub.GetMissingChannels(bot, _app.GetDB(), userId, channels)
+			missing := fsub.GetMissingChannels(bot, _app.GetDB(), _app.Log, userId, channels)
 
 			if len(missing) > 0 {
 				// Still missing some channels, update the prompt to the next one

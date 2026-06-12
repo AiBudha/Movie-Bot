@@ -154,17 +154,21 @@ func checkPrivateChat(bot *gotgbot.Bot, m *gotgbot.Message) bool {
 // If it fails or user is not admin, it replies/alerts and returns (0, false).
 func resolveChatIDAndVerifyAdmin(bot *gotgbot.Bot, m *gotgbot.Message) (int64, bool) {
 	if m.Chat.Type == "private" {
-		connChatID, err := _app.DB.GetUserConnection(m.From.Id)
-		if err != nil || connChatID == 0 {
-			_, _ = m.Reply(bot, "❌ You are not connected to any group. Use <code>/connect &lt;group_id&gt;</code> to connect first.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		chatIDs, err := _app.DB.GetUserConnections(m.From.Id)
+		if err != nil || len(chatIDs) == 0 {
+			_, _ = m.Reply(bot, "❌ You are not connected to any group. Use <code>/connect &lt;group_id&gt;</code> inside a group to connect first.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 			return 0, false
 		}
-		isAdmin, err := IsUserAdmin(bot, connChatID, m.From.Id)
-		if err != nil || !isAdmin {
-			_, _ = m.Reply(bot, "❌ Only group administrators can use this command.", nil)
-			return 0, false
+		if len(chatIDs) == 1 {
+			isAdmin, err := IsUserAdmin(bot, chatIDs[0], m.From.Id)
+			if err != nil || !isAdmin {
+				_, _ = m.Reply(bot, "❌ Only group administrators can use this command.", nil)
+				return 0, false
+			}
+			return chatIDs[0], true
 		}
-		return connChatID, true
+		// Multiple groups — show picker, caller must handle -1 signal
+		return -1, true
 	}
 
 	isAdmin, err := IsUserAdmin(bot, m.Chat.Id, m.From.Id)

@@ -296,9 +296,23 @@ func Application() *Core {
 	return _app
 }
 
-// LogUpdate prints update information to debug log.
+// LogUpdate prints update information to debug log and tracks active users and groups.
 func LogUpdate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	_app.Log.Debug(fmt.Sprintf("received %s update (%d)", ctx.GetType(), ctx.UpdateId))
+
+	// Track user and group asynchronously to keep processing lag-free
+	go func() {
+		if ctx.EffectiveUser != nil && !ctx.EffectiveUser.IsBot {
+			// Save/update user statistics
+			_ = _app.DB.SaveUserExtended(ctx.EffectiveUser.Id, "active", 0, ctx.EffectiveUser.LanguageCode)
+		}
+
+		if ctx.EffectiveChat != nil && (ctx.EffectiveChat.Type == "group" || ctx.EffectiveChat.Type == "supergroup") {
+			// Ensure group is registered in the database config/collection
+			_, _ = _app.DB.GetGroupConfig(ctx.EffectiveChat.Id)
+		}
+	}()
+
 	return nil
 }
 

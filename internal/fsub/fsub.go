@@ -2,6 +2,8 @@ package fsub
 
 import (
 	"fmt"
+	"html"
+	"strings"
 	"time"
 
 	"autofilterbot/internal/config"
@@ -23,11 +25,12 @@ type appPreview interface {
 	GetConfig() *config.Config
 	GetLog() *zap.Logger
 	BasicMessageValues(ctx *ext.Context, extraValues ...map[string]any) map[string]string
+	GetAdmins() []int64
 }
 
 // GetMissingChannels returns channels the user hasn't joined.
 // Uses 60s TTL cache to minimize API calls.
-func GetMissingChannels(bot *gotgbot.Bot, db *mongo.Client, userId int64, channels []model.Channel) []model.Channel {
+func GetMissingChannels(bot *gotgbot.Bot, db *mongo.Client, logger *zap.Logger, userId int64, channels []model.Channel) []model.Channel {
 	var missing []model.Channel
 	var userJoinReqs *model.User
 
@@ -40,7 +43,16 @@ func GetMissingChannels(bot *gotgbot.Bot, db *mongo.Client, userId int64, channe
 		// 2. Check getChatMember
 		member, err := bot.GetChatMember(ch.ID, userId, nil)
 		isMember := false
-		if err == nil {
+		if err != nil {
+			// Fail-open for this channel: if check fails due to bot permission, chat not found,
+			// or network issues, we do not block the user.
+			logger.Warn("GetMissingChannels: FSub check failed, failing open for this channel",
+				zap.Int64("channel_id", ch.ID),
+				zap.Int64("user_id", userId),
+				zap.Error(err),
+			)
+			isMember = true
+		} else {
 			status := member.GetStatus()
 			if status == "creator" || status == "administrator" || status == "member" {
 				isMember = true
@@ -89,12 +101,20 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 	}
 
 	userId := ctx.EffectiveUser.Id
+
+	// Bypass Fsub check for Admins
+	for _, adminId := range app.GetAdmins() {
+		if userId == adminId {
+			return true, nil
+		}
+	}
+
 	channels := app.GetConfig().GetFsubChannels()
 	if len(channels) == 0 {
 		return true, nil
 	}
 
-	missing := GetMissingChannels(bot, app.GetDB(), userId, channels)
+	missing := GetMissingChannels(bot, app.GetDB(), app.GetLog(), userId, channels)
 	if len(missing) == 0 {
 		// User has joined all channels. Clean up any leftover fsub prompt
 		// that might still exist (e.g., from a previous session or race condition).
@@ -116,7 +136,35 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 	btns = append(btns, []gotgbot.InlineKeyboardButton{{Text: "ᴊᴏɪɴ " + ch.Title, Url: link}})
 	btns = append(btns, []gotgbot.InlineKeyboardButton{{Text: "ᴛʀʏ ᴀɢᴀɪɴ 🔄", CallbackData: "fsub_verify"}})
 
-	text := fmt.Sprintf("<b>📛 Aᴄᴄᴇss Dᴇɴɪᴇᴅ 📛</b>\n\n<i>𝖠𝖼𝖼𝖾𝗌𝗌 𝖨𝗌 𝖱𝖾𝗌𝗍𝗋𝗂𝖼𝗍𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝖾𝗇𝖽 𝖠 <b>𝖩𝗈𝗂𝗇 𝖱𝖾𝗊𝗎𝖾𝗌𝗍</b> 𝖳𝗈 𝖳𝗁𝖾 𝖢𝗁𝖺𝗇𝗇𝖾𝗅 𝖡𝖾𝗅𝗈𝗐 𝖳𝗈 𝖢𝗈𝗇𝗍𝗂𝗇𝗎𝖾.</i>\n\n<b>Channel [%d/%d]</b>", len(channels)-len(missing)+1, len(channels))
+	// Format text using template values from config
+	fsubText := app.GetConfig().GetFsubText()
+	
+	mention := fmt.Sprintf("<a href=\"tg://user?id=%d\">%s</a>", userId, html.EscapeString(ctx.EffectiveUser.FirstName))
+	firstName := html.EscapeString(ctx.EffectiveUser.FirstName)
+	lastName := html.EscapeString(ctx.EffectiveUser.LastName)
+	username := ctx.EffectiveUser.Username
+	if username != "" {
+		username = "@" + username
+	} else {
+		username = mention
+	}
+	
+	replacer := strings.NewReplacer(
+		"{mention}", mention,
+		"{first_name}", firstName,
+		"{last_name}", lastName,
+		"{username}", username,
+		"{id}", fmt.Sprintf("%d", userId),
+		"{channel_title}", ch.Title,
+		"{index}", fmt.Sprintf("%d", len(channels)-len(missing)+1),
+		"{total}", fmt.Sprintf("%d", len(channels)),
+	)
+	text := replacer.Replace(fsubText)
+	
+	// Append progress context if not already present
+	if !strings.Contains(fsubText, "{channel_title}") && !strings.Contains(fsubText, ch.Title) {
+		text += fmt.Sprintf("\n\n📌 <b>𝖢𝗁𝖺𝗇𝗇𝖾𝗅:</b> <code>%s</code> <b>[%d/%d]</b>", ch.Title, len(channels)-len(missing)+1, len(channels))
+	}
 
 	// Private Chat Logic
 	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type == "private" {
