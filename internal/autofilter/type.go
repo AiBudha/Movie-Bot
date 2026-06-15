@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	seasonEpisodeRegex = regexp.MustCompile(`(?i)\bs(\d+)\s?e(\d+)\b|\bseason\s?(\d+)\s?episode\s?(\d+)\b|\b(\d+)x(\d+)\b`)
+	seasonEpisodeRegex = regexp.MustCompile(`(?i)\bs[o0]?(\d+)[._\s-]*(?:e|ep|episode|ep\.)[o0]?\s?(\d+)\b|\bseason\s?(\d+)\s?episode\s?(\d+)\b|\b(\d+)x(\d+)\b`)
 	qualityRegex       = regexp.MustCompile(`(?i)\b(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1|color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b`)
 	seasonOnlyRegex    = regexp.MustCompile(`(?i)\bseason\s?(\d+)\b|\bs(\d+)\b`)
 	episodeOnlyRegex   = regexp.MustCompile(`(?i)\bepisode\s?(\d+)\b|\bep[._-]?\s?(\d+)\b|\be(\d{1,4})\b`)
@@ -315,12 +315,12 @@ func ExtractBaseTitle(name string) string {
 	title = strings.ReplaceAll(title, ".", " ")
 	title = strings.ReplaceAll(title, "-", " ")
 	title = strings.ReplaceAll(title, "_", " ")
-	title = strings.TrimRight(title, "([]{}-_ ")
+	title = strings.TrimRight(title, "([]{}-_ #@|\\/+=:~*!&?")
 	title = strings.TrimSpace(title)
 	title = strings.Join(strings.Fields(title), " ")
 
 	// Strip trailing languages/audio tags from title
-	langRegex := regexp.MustCompile(`(?i)\s+\b(hindi|hin|english|eng|tamil|tam|telugu|tel|malayalam|mal|kannada|kan|multi|dual|mux|dubbed|dub|org|original|sub|subs|esub|esubs|hqc|hq|clean|hevc|x264|x265|av1|rip|web-dl|webrip|hdr|10bit)\b\s*$`)
+	langRegex := regexp.MustCompile(`(?i)\s+\b(hindi|hin|english|eng|tamil|tam|telugu|tel|malayalam|mal|kannada|kan|multi|dual|mux|dubbed|dub|org|original|sub|subs|esub|esubs|hqc|hq|clean|hevc|x264|x265|av1|rip|web-dl|webrip|hdr|10bit|movie|full\s+movie|hd|new|extended|unrated|directors?\s+cut)\b\s*$`)
 	for {
 		old := title
 		title = langRegex.ReplaceAllString(title, "")

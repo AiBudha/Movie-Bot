@@ -910,6 +910,21 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		cleanTitle := sb.String()
 		cleanTitle = strings.TrimRight(cleanTitle, "0123456789")
+		// Strip common suffix noise like "chapter", "part", "volume", "vol", "ch", "season", "episode"
+		suffixes := []string{"chapter", "part", "volume", "vol", "ch", "season", "episode"}
+		for {
+			changed := false
+			for _, s := range suffixes {
+				if strings.HasSuffix(cleanTitle, s) {
+					cleanTitle = strings.TrimSuffix(cleanTitle, s)
+					cleanTitle = strings.TrimRight(cleanTitle, "0123456789")
+					changed = true
+				}
+			}
+			if !changed {
+				break
+			}
+		}
 		return cleanTitle + "_" + year
 	}
 
