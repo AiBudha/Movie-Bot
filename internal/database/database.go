@@ -77,6 +77,8 @@ type Database interface {
 	SearchFiles(query string) (Cursor, error)
 	// GetRecent2026Files retrieves the most recent 2026 uploaded files.
 	GetRecent2026Files(limit int) ([]*model.File, error)
+	// GetRecentFiles retrieves the most recent uploaded files.
+	GetRecentFiles(limit int) ([]*model.File, error)
 
 	// SaveGroup inserts a group id into the database to keep track of them.
 	SaveGroup(id int64) error

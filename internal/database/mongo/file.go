@@ -587,6 +587,24 @@ func (c *Client) GetRecent2026Files(limit int) ([]*model.File, error) {
 	return files, nil
 }
 
+func (c *Client) GetRecentFiles(limit int) ([]*model.File, error) {
+	opts := options.Find().SetSort(bson.M{"time": -1}).SetLimit(int64(limit))
+	cursor, err := c.fileCollection.Find(c.ctx, bson.M{}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(c.ctx)
+
+	var files []*model.File
+	for cursor.Next(c.ctx) {
+		var f model.File
+		if err := cursor.Decode(&f); err == nil {
+			files = append(files, &f)
+		}
+	}
+	return files, nil
+}
+
 func (c *Client) CleanDuplicates(ctx context.Context, log *zap.Logger) (int, error) {
 	log.Info("mongo: starting database duplicate cleanup...")
 	var totalDeleted int

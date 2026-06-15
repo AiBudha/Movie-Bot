@@ -9,26 +9,38 @@ import (
 )
 
 var (
-	userCooldowns = make(map[int64]time.Time)
-	cooldownMu    sync.RWMutex
+	userMessageCooldowns  = make(map[int64]time.Time)
+	userCallbackCooldowns = make(map[int64]time.Time)
+	cooldownMu            sync.RWMutex
 )
 
 // AntiSpam prevents users from making requests too frequently.
 func AntiSpam(cooldown time.Duration, isAdmin func(int64) bool) func(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return func(bot *gotgbot.Bot, ctx *ext.Context) error {
+		if ctx.EffectiveUser == nil {
+			return ext.ContinueGroups
+		}
 		userId := ctx.EffectiveUser.Id
 		
 		if isAdmin != nil && isAdmin(userId) {
-			return nil // Bypass rate-limiting for admins
+			return ext.ContinueGroups // Bypass rate-limiting for admins and continue processing
 		}
 
+		isCallback := ctx.CallbackQuery != nil
+
 		cooldownMu.RLock()
-		lastSeen, exists := userCooldowns[userId]
+		var lastSeen time.Time
+		var exists bool
+		if isCallback {
+			lastSeen, exists = userCallbackCooldowns[userId]
+		} else {
+			lastSeen, exists = userMessageCooldowns[userId]
+		}
 		cooldownMu.RUnlock()
 
 		if exists && time.Since(lastSeen) < cooldown {
 			// Silently ignore or answer callback
-			if ctx.CallbackQuery != nil {
+			if isCallback {
 				ctx.CallbackQuery.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
 					Text: "Slow down! Wait a few seconds.",
 				})
@@ -37,10 +49,14 @@ func AntiSpam(cooldown time.Duration, isAdmin func(int64) bool) func(bot *gotgbo
 		}
 
 		cooldownMu.Lock()
-		userCooldowns[userId] = time.Now()
+		if isCallback {
+			userCallbackCooldowns[userId] = time.Now()
+		} else {
+			userMessageCooldowns[userId] = time.Now()
+		}
 		cooldownMu.Unlock()
 
-		return nil
+		return ext.ContinueGroups // Let subsequent handler groups process the update
 	}
 }
 
@@ -50,9 +66,14 @@ func init() {
 		ticker := time.NewTicker(time.Hour)
 		for range ticker.C {
 			cooldownMu.Lock()
-			for id, lastSeen := range userCooldowns {
+			for id, lastSeen := range userMessageCooldowns {
 				if time.Since(lastSeen) > time.Hour {
-					delete(userCooldowns, id)
+					delete(userMessageCooldowns, id)
+				}
+			}
+			for id, lastSeen := range userCallbackCooldowns {
+				if time.Since(lastSeen) > time.Hour {
+					delete(userCallbackCooldowns, id)
 				}
 			}
 			cooldownMu.Unlock()

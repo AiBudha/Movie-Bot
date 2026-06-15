@@ -2,11 +2,14 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"autofilterbot/internal/autofilter"
 	"autofilterbot/internal/ott"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -77,28 +80,76 @@ func UnsubscribeCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return err
 }
 
+var yearRegex = regexp.MustCompile(`\b(19\d\d|20\d\d)\b`)
+
+func extractYear(name string) string {
+	matches := yearRegex.FindStringSubmatch(name)
+	if len(matches) > 0 {
+		return matches[0]
+	}
+	return ""
+}
+
 // LatestCommand fetches and displays recent releases with inline keyboard pagination.
 func LatestCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
-	statusMsg, err := ctx.EffectiveMessage.Reply(bot, "🔍 Fetching latest OTT releases...", nil)
+	statusMsg, err := ctx.EffectiveMessage.Reply(bot, "🔍 Fetching latest uploaded movies...", nil)
 	if err != nil {
 		return err
 	}
 
-	// Fetch releases from the last 7 days (dedup = false for browsing)
-	items, err := ott.GetNewReleases(context.Background(), _app.DB, 7, false)
+	// Fetch files from the database
+	files, err := _app.DB.GetRecentFiles(150)
 	if err != nil {
 		_app.Log.Error("/latest command error", zap.Error(err))
-		_, _, err = statusMsg.EditText(bot, "❌ Could not fetch releases. Please try again later.", nil)
+		_, _, err = statusMsg.EditText(bot, "❌ Could not fetch latest uploads. Please try again later.", nil)
 		return err
 	}
 
-	if len(items) == 0 {
-		text := "😔 <b>No new OTT releases found in the last 7 days.</b>\n\nCheck JustWatch directly for more."
+	// Group and convert to ReleaseItems
+	type movieGroup struct {
+		Title string
+		Year  string
+	}
+	var groups []movieGroup
+	seen := make(map[string]bool)
+	for _, f := range files {
+		title := autofilter.ExtractBaseTitle(f.FileName)
+		if title == "" {
+			continue
+		}
+		cleanTitle := cleanCompareString(title)
+		if cleanTitle == "" {
+			continue
+		}
+		year := extractYear(f.FileName)
+		key := cleanTitle
+		if year != "" {
+			key += "_" + year
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		groups = append(groups, movieGroup{Title: title, Year: year})
+	}
+
+	if len(groups) == 0 {
+		text := "😔 <b>No recent uploads found in the database.</b>"
 		_, _, err = statusMsg.EditText(bot, text, &gotgbot.EditMessageTextOpts{
 			ParseMode:          gotgbot.ParseModeHTML,
 			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true},
 		})
 		return err
+	}
+
+	var items []ott.ReleaseItem
+	for _, g := range groups {
+		items = append(items, ott.ReleaseItem{
+			Title:       g.Title,
+			ReleaseDate: g.Year,
+			Type:        "movie",
+			Source:      "database",
+		})
 	}
 
 	sessionKey := ott.CreateLatestSession(items)
@@ -269,12 +320,29 @@ func buildLatestKeyboard(sessionKey string, page int, items []ott.ReleaseItem) g
 			title = title[:39] + "..."
 		}
 
-		rows = append(rows, []gotgbot.InlineKeyboardButton{
-			{
-				Text:         fmt.Sprintf("%s %s", kind, title),
-				CallbackData: fmt.Sprintf("latest_it|%s|%d", sessionKey, idx),
-			},
-		})
+		if item.Source == "database" {
+			// Construct deep link URL button
+			queryStr := item.Title
+			if item.ReleaseDate != "" {
+				queryStr += " " + item.ReleaseDate
+			}
+			encodedQuery := base64.RawURLEncoding.EncodeToString([]byte("s" + queryStr))
+			deepLink := fmt.Sprintf("https://t.me/%s?start=%s", _app.Bot.Username, encodedQuery)
+
+			rows = append(rows, []gotgbot.InlineKeyboardButton{
+				{
+					Text: fmt.Sprintf("%s %s %s", kind, title, item.ReleaseDate),
+					Url:  deepLink,
+				},
+			})
+		} else {
+			rows = append(rows, []gotgbot.InlineKeyboardButton{
+				{
+					Text:         fmt.Sprintf("%s %s", kind, title),
+					CallbackData: fmt.Sprintf("latest_it|%s|%d", sessionKey, idx),
+				},
+			})
+		}
 	}
 
 	var nav []gotgbot.InlineKeyboardButton
@@ -300,5 +368,5 @@ func buildLatestText(items []ott.ReleaseItem, page int) string {
 	if end > total {
 		end = total
 	}
-	return fmt.Sprintf("🍿 <b>Latest OTT Releases</b>\nShowing <b>%d-%d</b> of <b>%d</b>.\n\nTap a movie/series to view full information:", start+1, end, total)
+	return fmt.Sprintf("🍿 <b>Latest Uploaded Movies & Series</b>\nShowing <b>%d-%d</b> of <b>%d</b>.\n\nTap a title to get the download links:", start+1, end, total)
 }
