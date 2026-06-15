@@ -277,7 +277,12 @@ func CleanQuality(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	if ctx.CallbackQuery != nil {
 		_, _, err = ctx.CallbackQuery.Message.EditText(bot, "🗑️ Scanning and Cleaning Low Quality Files...", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
-		progM = ctx.CallbackQuery.Message.(*gotgbot.Message)
+		switch msgT := ctx.CallbackQuery.Message.(type) {
+		case gotgbot.Message:
+			progM = &msgT
+		case *gotgbot.Message:
+			progM = msgT
+		}
 	} else {
 		progM, err = m.Reply(bot, "🗑️ Scanning and Cleaning Low Quality Files...", nil)
 	}
@@ -287,43 +292,53 @@ func CleanQuality(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	var totalDeleted int
-	for _, kw := range keywords {
-		cursor, err := _app.DB.SearchFiles(kw)
-		if err != nil {
-			continue
-		}
+	// Run low quality clean asynchronously in a goroutine to prevent blocking the dispatcher.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_app.Log.Error("cleanquality: panic recovered", zap.Any("panic", r))
+				_, _, _ = progM.EditText(bot, "❌ <b>Cleanup failed:</b> An unexpected internal panic occurred.", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+			}
+		}()
 
-		for cursor.Next(context.Background()) {
-			var file model.File
-			if err := cursor.Decode(&file); err == nil {
-				// Only delete if it matches one of the garbage/leak keywords or has low quality score
-				if autofilter.IsGarbageFile(file.FileName) || autofilter.QualityLevel(file.FileName) <= 15 {
-					if _app.DB.DeleteFile(file.UniqueId) == nil {
-						totalDeleted++
+		var totalDeleted int
+		for _, kw := range keywords {
+			cursor, err := _app.DB.SearchFiles(kw)
+			if err != nil {
+				continue
+			}
+
+			for cursor.Next(context.Background()) {
+				var file model.File
+				if err := cursor.Decode(&file); err == nil {
+					// Only delete if it matches one of the garbage/leak keywords or has low quality score
+					if autofilter.IsGarbageFile(file.FileName) || autofilter.QualityLevel(file.FileName) <= 15 {
+						if _app.DB.DeleteFile(file.UniqueId) == nil {
+							totalDeleted++
+						}
 					}
 				}
 			}
+			cursor.Close(context.Background())
 		}
-		cursor.Close(context.Background())
-	}
 
-	if totalDeleted > 0 {
-		if _app.Cache != nil && _app.Cache.SearchCache != nil {
-			_app.Cache.SearchCache.Clear()
+		if totalDeleted > 0 {
+			if _app.Cache != nil && _app.Cache.SearchCache != nil {
+				_app.Cache.SearchCache.Clear()
+			}
 		}
-	}
 
-	text := fmt.Sprintf("<b>✅ Quality Clean Complete !</b>\n\nDeleted <code>%d</code> low-quality files.", totalDeleted)
-	_, _, err = progM.EditText(bot, text, &gotgbot.EditMessageTextOpts{
-		ParseMode: gotgbot.ParseModeHTML,
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{
-			Text: "🔙 Back", CallbackData: "admin:back",
-		}}}},
-	})
-	if err != nil {
-		_app.Log.Warn("cleanquality: edit final result failed", zap.Error(err))
-	}
+		text := fmt.Sprintf("<b>✅ Quality Clean Complete !</b>\n\nDeleted <code>%d</code> low-quality files.", totalDeleted)
+		_, _, err = progM.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+			ParseMode: gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{
+				Text: "🔙 Back", CallbackData: "admin:back",
+			}}}},
+		})
+		if err != nil {
+			_app.Log.Warn("cleanquality: edit final result failed", zap.Error(err))
+		}
+	}()
 
 	return nil
 }
@@ -340,7 +355,12 @@ func CleanDuplicatesCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	if ctx.CallbackQuery != nil {
 		_, _, err = ctx.CallbackQuery.Message.EditText(bot, "🧹 <i>Scanning and cleaning duplicate files... This may take a moment.</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
-		progM = ctx.CallbackQuery.Message.(*gotgbot.Message)
+		switch msgT := ctx.CallbackQuery.Message.(type) {
+		case gotgbot.Message:
+			progM = &msgT
+		case *gotgbot.Message:
+			progM = msgT
+		}
 	} else {
 		progM, err = m.Reply(bot, "🧹 <i>Scanning and cleaning duplicate files... This may take a moment.</i>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 	}
@@ -350,28 +370,38 @@ func CleanDuplicatesCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	deletedCount, err := _app.DB.CleanDuplicates(_app.Ctx, _app.Log)
-	if err != nil {
-		_, _, _ = progM.EditText(bot, fmt.Sprintf("❌ <b>Cleanup failed:</b> <code>%s</code>", err.Error()), &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
-		return nil
-	}
+	// Run cleanup asynchronously in a goroutine to prevent blocking the dispatcher.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_app.Log.Error("cleandups: panic recovered", zap.Any("panic", r))
+				_, _, _ = progM.EditText(bot, "❌ <b>Cleanup failed:</b> An unexpected internal panic occurred.", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+			}
+		}()
 
-	if deletedCount > 0 {
-		if _app.Cache != nil && _app.Cache.SearchCache != nil {
-			_app.Cache.SearchCache.Clear()
+		deletedCount, err := _app.DB.CleanDuplicates(_app.Ctx, _app.Log)
+		if err != nil {
+			_, _, _ = progM.EditText(bot, fmt.Sprintf("❌ <b>Cleanup failed:</b> <code>%s</code>", err.Error()), &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+			return
 		}
-	}
 
-	text := fmt.Sprintf("<b>✅ Duplicate Cleanup Complete !</b>\n\nDeleted <code>%d</code> duplicate file records.", deletedCount)
-	_, _, err = progM.EditText(bot, text, &gotgbot.EditMessageTextOpts{
-		ParseMode: gotgbot.ParseModeHTML,
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{
-			Text: "🔙 Back", CallbackData: "admin:back",
-		}}}},
-	})
-	if err != nil {
-		_app.Log.Warn("cleandups: edit final result failed", zap.Error(err))
-	}
+		if deletedCount > 0 {
+			if _app.Cache != nil && _app.Cache.SearchCache != nil {
+				_app.Cache.SearchCache.Clear()
+			}
+		}
+
+		text := fmt.Sprintf("<b>✅ Duplicate Cleanup Complete !</b>\n\nDeleted <code>%d</code> duplicate file records.", deletedCount)
+		_, _, err = progM.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+			ParseMode: gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{
+				Text: "🔙 Back", CallbackData: "admin:back",
+			}}}},
+		})
+		if err != nil {
+			_app.Log.Warn("cleandups: edit final result failed", zap.Error(err))
+		}
+	}()
 
 	return nil
 }

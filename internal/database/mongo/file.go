@@ -607,7 +607,12 @@ func (c *Client) GetRecentFiles(limit int) ([]*model.File, error) {
 
 func (c *Client) CleanDuplicates(ctx context.Context, log *zap.Logger) (int, error) {
 	log.Info("mongo: starting database duplicate cleanup...")
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	var totalDeleted int
+	aggOpts := options.Aggregate().SetAllowDiskUse(true)
+
 	for _, coll := range c.fileCollection.allCollections {
 		// 1. Clean up duplicate file_ids
 		pipelineFileId := mongo.Pipeline{
@@ -620,32 +625,38 @@ func (c *Client) CleanDuplicates(ctx context.Context, log *zap.Logger) (int, err
 				{Key: "count", Value: bson.D{{Key: "$gt", Value: 1}}},
 			}}},
 		}
-		cursor, err := coll.Aggregate(ctx, pipelineFileId)
-		if err == nil {
-			var results []struct {
-				FileID string   `bson:"_id"`
-				IDs    []string `bson:"ids"`
-			}
-			if err := cursor.All(ctx, &results); err == nil {
-				deletedCount := 0
-				for _, res := range results {
-					if len(res.IDs) > 1 {
-						// Keep the first ID, delete the rest
-						toDelete := res.IDs[1:]
-						resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
-						if err == nil {
-							deletedCount += int(resDel.DeletedCount)
-						}
-					}
-				}
-				if deletedCount > 0 {
-					log.Info("mongo: cleaned up duplicate file_ids", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
-					totalDeleted += deletedCount
-				}
-			}
+		cursor, err := coll.Aggregate(ctx, pipelineFileId, aggOpts)
+		if err != nil {
+			log.Error("mongo: aggregate for duplicate file_ids failed", zap.Error(err), zap.String("collection", coll.Name()))
+			return totalDeleted, fmt.Errorf("aggregate file_ids failed on %s: %w", coll.Name(), err)
+		}
+
+		var resultsFileId []struct {
+			FileID string   `bson:"_id"`
+			IDs    []string `bson:"ids"`
+		}
+		if err := cursor.All(ctx, &resultsFileId); err != nil {
 			cursor.Close(ctx)
-		} else {
-			log.Warn("mongo: aggregate for duplicate file_ids failed", zap.Error(err), zap.String("collection", coll.Name()))
+			log.Error("mongo: cursor all for duplicate file_ids failed", zap.Error(err), zap.String("collection", coll.Name()))
+			return totalDeleted, fmt.Errorf("decode file_ids failed on %s: %w", coll.Name(), err)
+		}
+		cursor.Close(ctx)
+
+		deletedCount := 0
+		for _, res := range resultsFileId {
+			if len(res.IDs) > 1 {
+				toDelete := res.IDs[1:]
+				resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
+				if err != nil {
+					log.Warn("mongo: delete duplicate file_ids failed", zap.Error(err), zap.String("collection", coll.Name()))
+					continue
+				}
+				deletedCount += int(resDel.DeletedCount)
+			}
+		}
+		if deletedCount > 0 {
+			log.Info("mongo: cleaned up duplicate file_ids", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
+			totalDeleted += deletedCount
 		}
 
 		// 2. Clean up duplicate file_name + file_size
@@ -662,30 +673,37 @@ func (c *Client) CleanDuplicates(ctx context.Context, log *zap.Logger) (int, err
 				{Key: "count", Value: bson.D{{Key: "$gt", Value: 1}}},
 			}}},
 		}
-		cursor, err = coll.Aggregate(ctx, pipelineNameSize)
-		if err == nil {
-			var results []struct {
-				IDs []string `bson:"ids"`
-			}
-			if err := cursor.All(ctx, &results); err == nil {
-				deletedCount := 0
-				for _, res := range results {
-					if len(res.IDs) > 1 {
-						toDelete := res.IDs[1:]
-						resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
-						if err == nil {
-							deletedCount += int(resDel.DeletedCount)
-						}
-					}
-				}
-				if deletedCount > 0 {
-					log.Info("mongo: cleaned up duplicate name/size files", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
-					totalDeleted += deletedCount
-				}
-			}
+		cursor, err = coll.Aggregate(ctx, pipelineNameSize, aggOpts)
+		if err != nil {
+			log.Error("mongo: aggregate for duplicate name/size failed", zap.Error(err), zap.String("collection", coll.Name()))
+			return totalDeleted, fmt.Errorf("aggregate name/size failed on %s: %w", coll.Name(), err)
+		}
+
+		var resultsNameSize []struct {
+			IDs []string `bson:"ids"`
+		}
+		if err := cursor.All(ctx, &resultsNameSize); err != nil {
 			cursor.Close(ctx)
-		} else {
-			log.Warn("mongo: aggregate for duplicate name/size failed", zap.Error(err), zap.String("collection", coll.Name()))
+			log.Error("mongo: cursor all for duplicate name/size failed", zap.Error(err), zap.String("collection", coll.Name()))
+			return totalDeleted, fmt.Errorf("decode name/size failed on %s: %w", coll.Name(), err)
+		}
+		cursor.Close(ctx)
+
+		deletedCount = 0
+		for _, res := range resultsNameSize {
+			if len(res.IDs) > 1 {
+				toDelete := res.IDs[1:]
+				resDel, err := coll.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": toDelete}})
+				if err != nil {
+					log.Warn("mongo: delete duplicate name/size failed", zap.Error(err), zap.String("collection", coll.Name()))
+					continue
+				}
+				deletedCount += int(resDel.DeletedCount)
+			}
+		}
+		if deletedCount > 0 {
+			log.Info("mongo: cleaned up duplicate name/size files", zap.String("collection", coll.Name()), zap.Int("deleted", deletedCount))
+			totalDeleted += deletedCount
 		}
 	}
 	log.Info("mongo: database duplicate cleanup completed.", zap.Int("total_deleted", totalDeleted))
