@@ -480,7 +480,7 @@ func titleMatchesQuery(title, query string) bool {
 		}
 	}
 
-	// If they match exactly or one is a substring of the other
+	// Exact matches are always valid
 	if cleanTitle == cleanQuery {
 		return true
 	}
@@ -491,17 +491,84 @@ func titleMatchesQuery(title, query string) bool {
 		return true
 	}
 
-	// Check if the query is a substring of the title
-	// To avoid false positives, we want to make sure the query is not too short.
-	if strings.Contains(cleanTitle, cleanQuery) {
-		if len(cleanQuery) >= 4 {
-			return true
+	// Word-based matching with strict alignment
+	getWords := func(s string) []string {
+		s = strings.ToLower(s)
+		yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+		s = yearRegex.ReplaceAllString(s, "")
+
+		var sb strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				sb.WriteRune(r)
+			} else {
+				sb.WriteRune(' ')
+			}
+		}
+		return strings.Fields(sb.String())
+	}
+
+	titleWords := getWords(title)
+	queryWords := getWords(query)
+
+	if len(titleWords) == 0 || len(queryWords) == 0 {
+		return false
+	}
+
+	// Verify all query words exist in the title
+	matchCount := 0
+	titleWordMap := make(map[string]bool)
+	for _, w := range titleWords {
+		titleWordMap[w] = true
+	}
+
+	for _, w := range queryWords {
+		if titleWordMap[w] {
+			matchCount++
 		}
 	}
 
-	// Check if title is a substring of the query
-	if strings.Contains(cleanQuery, cleanTitle) {
-		if len(cleanTitle) >= 4 {
+	if matchCount < len(queryWords) {
+		return false
+	}
+
+	titleCoverage := float64(matchCount) / float64(len(titleWords))
+
+	// Allow if:
+	// 1. Title coverage is >= 50% (e.g. query is a major portion of the title)
+	// 2. Or query is highly specific (contains at least 3 words)
+	// 3. Or query is a multi-word prefix/suffix matching title words consecutively
+	if titleCoverage >= 0.5 {
+		return true
+	}
+	if len(queryWords) >= 3 {
+		return true
+	}
+
+	if len(queryWords) >= 2 {
+		// Check prefix alignment
+		isPrefix := true
+		for i := 0; i < len(queryWords); i++ {
+			if i >= len(titleWords) || titleWords[i] != queryWords[i] {
+				isPrefix = false
+				break
+			}
+		}
+		if isPrefix {
+			return true
+		}
+
+		// Check suffix alignment
+		isSuffix := true
+		for i := 0; i < len(queryWords); i++ {
+			tIdx := len(titleWords) - len(queryWords) + i
+			tIdxOk := tIdx >= 0 && tIdx < len(titleWords)
+			if !tIdxOk || titleWords[tIdx] != queryWords[i] {
+				isSuffix = false
+				break
+			}
+		}
+		if isSuffix {
 			return true
 		}
 	}
