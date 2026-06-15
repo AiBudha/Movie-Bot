@@ -19,27 +19,35 @@ func AdminPanel(bot *gotgbot.Bot, ctx *ext.Context) error {
 	markup := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			// Row 1: Stats & Overview
-			{{Text: "Stats 📊", CallbackData: "admin:stats"}, {Text: "Users 👥", CallbackData: "admin:users"}, {Text: "FSub Stats 📈", CallbackData: "admin:fstats"}},
-			// Row 2: Messages & Advertising
-			{{Text: "Broadcast 📢", CallbackData: "admin:broadcast"}, {Text: "History 📂", CallbackData: "admin:bchistory"}, {Text: "Create Post 📮", CallbackData: "admin:post"}},
-			// Row 3: File Syncing & Indexing
-			{{Text: "Index 🗂️", CallbackData: "admin:index"}, {Text: "Batch 📦", CallbackData: "admin:batch"}, {Text: "GenLink 🔗", CallbackData: "admin:genlink"}},
-			// Row 4: Delete Operations
-			{{Text: "Delete 🗑️", CallbackData: "admin:delete"}, {Text: "Delete All 🚯", CallbackData: "admin:deleteall"}, {Text: "Clean Quality 🧹", CallbackData: "admin:clean"}, {Text: "Clean Dups 👥", CallbackData: "admin:cleandups"}},
-			// Row 5: Skipping & Logs
-			{{Text: "Set Skip ⏭️", CallbackData: "admin:setskip"}, {Text: "Logs 📄", CallbackData: "admin:logs"}},
+			{{Text: "Stats 📊", CallbackData: "admin:stats"}, {Text: "Users 👥", CallbackData: "admin:users"}},
+			// Row 2: FSub Stats & Broadcast
+			{{Text: "FSub Stats 📈", CallbackData: "admin:fstats"}, {Text: "Broadcast 📢", CallbackData: "admin:broadcast"}},
+			// Row 3: History & Create Post
+			{{Text: "History 📂", CallbackData: "admin:bchistory"}, {Text: "Create Post 📮", CallbackData: "admin:post"}},
+			// Row 4: Index & Batch
+			{{Text: "Index 🗂️", CallbackData: "admin:index"}, {Text: "Batch 📦", CallbackData: "admin:batch"}},
+			// Row 5: GenLink & Delete
+			{{Text: "GenLink 🔗", CallbackData: "admin:genlink"}, {Text: "Delete 🗑️", CallbackData: "admin:delete"}},
+			// Row 6: Delete All & Clean Quality
+			{{Text: "Delete All 🚯", CallbackData: "admin:deleteall"}, {Text: "Clean Quality 🧹", CallbackData: "admin:clean"}},
+			// Row 7: Clean Dups & Set Skip
+			{{Text: "Clean Dups 👥", CallbackData: "admin:cleandups"}, {Text: "Set Skip ⏭️", CallbackData: "admin:setskip"}},
+			// Row 8: Logs & Size Button
+			{{Text: "Logs 📄", CallbackData: "admin:logs"}, {Text: "Size Button 📏", CallbackData: "config:sizebtn"}},
 			
 			// === CONFIG SETTINGS ===
-			// Row 6: Size Button, Poster, Results Channel
-			{{Text: "Size Button 📏", CallbackData: "config:sizebtn"}, {Text: "Poster 🖼️", CallbackData: "config:poster"}, {Text: "Results Chan 📢", CallbackData: "config:reschan"}},
-			// Row 7: Auto Delete, File AutoDelete, Monitored Chans
-			{{Text: "Auto Delete ⏱️", CallbackData: "config:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:filedel"}, {Text: "Monitored Chans 🎧", CallbackData: "config:moniterd"}},
-			// Row 8: Force Sub 🔒, Group Defaults, Database Config
-			{{Text: "Force Sub 🔒", CallbackData: "config:fsub"}, {Text: "Group Defaults 👥", CallbackData: "config:group"}, {Text: "Database 📂", CallbackData: "config:db"}},
-			// Row 9: Result Button, Footer Buttons
+			// Row 9: Poster & Results Channel
+			{{Text: "Poster 🖼️", CallbackData: "config:poster"}, {Text: "Results Chan 📢", CallbackData: "config:reschan"}},
+			// Row 10: Auto Delete & File AutoDelete
+			{{Text: "Auto Delete ⏱️", CallbackData: "config:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:filedel"}},
+			// Row 11: Monitored Chans & Force Sub
+			{{Text: "Monitored Chans 🎧", CallbackData: "config:moniterd"}, {Text: "Force Sub 🔒", CallbackData: "config:fsub"}},
+			// Row 12: Group Defaults & Database Config
+			{{Text: "Group Defaults 👥", CallbackData: "config:group"}, {Text: "Database 📂", CallbackData: "config:db"}},
+			// Row 13: Result Button & Footer Buttons
 			{{Text: "Result Button 🔗", CallbackData: "config:resbtn"}, {Text: "Footer Buttons 🎛️", CallbackData: "config:footer"}},
 			
-			// Row 10: Close
+			// Row 14: Close
 			{{Text: "Close ❌", CallbackData: "admin:close"}},
 		},
 	}
