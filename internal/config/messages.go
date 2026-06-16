@@ -66,8 +66,8 @@ func (c *Config) GetAboutMessage() *message.Message {
 	} else {
 		text = `⌬ SYSTEM STATUS
 ╭ Bot Name  : {my_name}
-┊ Git Repo  : https://github.com/Bibinkvr/Movie-bot.git
-┊ Creator   : <a href="https://github.com/Bibinkvr">Bibinkvr</a>
+┊ Git Repo  : <a href="https://github.com/AiBudha/Movie-Bot">Code</a>
+┊ Creator   : <a href="https://github.com/AiBudha">AiBudha</a>
 ┊ Total Users: {total_users}
 ┊ CPU  : {cpu}
 ┊ RAM  : {ram}
